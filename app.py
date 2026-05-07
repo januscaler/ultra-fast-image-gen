@@ -21,6 +21,16 @@ import shutil
 import tempfile
 from datetime import datetime
 
+from anima_aio import (
+    ANIMA_DEFAULTS,
+    ANIMA_MODEL_CHOICE,
+    ANIMA_MODEL_TYPE,
+    delete_anima_model,
+    generate_anima_aio,
+    get_anima_storage_entry,
+    is_anima_model_choice,
+)
+
 DEFAULT_OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "Pictures", "ultra-fast-image-gen")
 
 
@@ -38,7 +48,7 @@ atexit.register(cleanup_gradio_cache)
 # Global state
 pipe = None
 current_device = None
-current_model = None  # "zimage-quant", "zimage-full", "flux2-klein-int8"
+current_model = None  # "zimage-quant", "zimage-full", "flux2-klein-int8", "anima-aio-metal"
 current_lora_path = None
 
 # Model choices
@@ -47,6 +57,7 @@ MODEL_CHOICES = [
     "FLUX.2-klein-9B (4bit SDNQ - Higher Quality)",
     "FLUX.2-klein-4B (Int8)",
     "Z-Image Turbo (Quantized - Fast)",
+    ANIMA_MODEL_CHOICE,
     "Z-Image Turbo (Full - LoRA support)",
 ]
 
@@ -259,7 +270,9 @@ def load_flux2_klein_9b_sdnq_pipeline(device="mps"):
 def load_pipeline(model_choice: str, device: str = "mps"):
     global pipe, current_device, current_model, current_lora_path
     
-    if "Quantized" in model_choice:
+    if is_anima_model_choice(model_choice):
+        model_type = ANIMA_MODEL_TYPE
+    elif "Quantized" in model_choice:
         model_type = "zimage-quant"
     elif "Full" in model_choice:
         model_type = "zimage-full"
@@ -271,6 +284,21 @@ def load_pipeline(model_choice: str, device: str = "mps"):
         model_type = "flux2-klein-int8"
     else:
         model_type = "zimage-quant"
+
+    if model_type == ANIMA_MODEL_TYPE:
+        if pipe is not None:
+            print(f"Switching from {current_model} to {model_type}...")
+            del pipe
+            pipe = None
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+        current_device = "metal"
+        current_model = model_type
+        current_lora_path = None
+        print("Using external Anima AIO Metal runner.")
+        return None
     
     if pipe is not None and current_device == device and current_model == model_type:
         return pipe
@@ -377,12 +405,36 @@ def generate_image(
     
     pipe = load_pipeline(model_choice, device)
     
-    if current_model == "zimage-full" and lora_file:
-        load_lora(lora_file, lora_strength, device)
-    
     if seed == -1:
         seed = torch.randint(0, 2**32, (1,)).item()
-    
+
+    if current_model == ANIMA_MODEL_TYPE:
+        result = generate_anima_aio(
+            prompt,
+            height=int(height),
+            width=int(width),
+            steps=int(steps),
+            seed=int(seed),
+            cfg_scale=float(guidance),
+            output_dir=output_dir if auto_save else None,
+        )
+        cfg_info = f" | CFG: {guidance}" if guidance > 0 else ""
+        timing = ""
+        if result.get("generation_time"):
+            timing += f" | Gen: {result['generation_time']}"
+        if result.get("wall_time"):
+            timing += f" | Wall: {result['wall_time']}"
+        save_info = f" | Saved: {result['path']}" if auto_save else ""
+        info = (
+            f"Seed: {result['seed']} | Model: Anima Turbo AIO Q4 (Metal) | "
+            f"Mode: txt2img | Device: Metal | {int(width)}x{int(height)} | Steps: {int(steps)}"
+            f"{cfg_info}{timing}{save_info}"
+        )
+        return result["image"], info
+
+    if current_model == "zimage-full" and lora_file:
+        load_lora(lora_file, lora_strength, device)
+
     if device == "cuda":
         generator = torch.Generator("cuda").manual_seed(int(seed))
     elif device == "mps":
@@ -571,26 +623,29 @@ def scan_downloaded_models():
     cache_dir = get_hf_cache_dir()
     models = []
     total_size = 0
-    
-    if not os.path.exists(cache_dir):
-        return [], "0 B"
-    
-    for repo_id, display_name in KNOWN_MODELS.items():
-        # Convert repo_id to cache folder name (owner--model)
-        cache_name = f"models--{repo_id.replace('/', '--')}"
-        model_path = os.path.join(cache_dir, cache_name)
-        
-        if os.path.exists(model_path):
-            size = get_dir_size(model_path)
-            total_size += size
-            models.append({
-                "repo_id": repo_id,
-                "display_name": display_name,
-                "cache_name": cache_name,
-                "path": model_path,
-                "size": size,
-                "size_str": format_size(size),
-            })
+
+    if os.path.exists(cache_dir):
+        for repo_id, display_name in KNOWN_MODELS.items():
+            # Convert repo_id to cache folder name (owner--model)
+            cache_name = f"models--{repo_id.replace('/', '--')}"
+            model_path = os.path.join(cache_dir, cache_name)
+
+            if os.path.exists(model_path):
+                size = get_dir_size(model_path)
+                total_size += size
+                models.append({
+                    "repo_id": repo_id,
+                    "display_name": display_name,
+                    "cache_name": cache_name,
+                    "path": model_path,
+                    "size": size,
+                    "size_str": format_size(size),
+                })
+
+    anima_entry = get_anima_storage_entry()
+    if anima_entry is not None:
+        total_size += anima_entry["size"]
+        models.append(anima_entry)
     
     models.sort(key=lambda x: x["size"], reverse=True)
     
@@ -625,7 +680,7 @@ def get_model_choices_for_deletion():
 
 def delete_model(model_selection):
     """Delete a specific model from cache."""
-    global pipe, current_model
+    global pipe, current_device, current_model
     
     if not model_selection:
         return get_storage_display(), get_model_choices_for_deletion(), "No model selected"
@@ -642,10 +697,16 @@ def delete_model(model_selection):
         return get_storage_display(), get_model_choices_for_deletion(), f"Model not found: {model_selection}"
     
     # Unload pipeline if it's using this model
-    model_repo = target['repo_id'].lower()
+    model_repo = target.get('repo_id', '').lower()
+    if target.get("external") == "anima" and current_model == ANIMA_MODEL_TYPE:
+        current_model = None
+        current_device = None
+
     if pipe is not None:
         needs_unload = False
-        if "klein-4b" in model_repo and current_model and "4b" in current_model.lower():
+        if target.get("external") == "anima" and current_model == ANIMA_MODEL_TYPE:
+            needs_unload = True
+        elif "klein-4b" in model_repo and current_model and "4b" in current_model.lower():
             needs_unload = True
         elif "klein-9b" in model_repo and current_model and "9b" in current_model.lower():
             needs_unload = True
@@ -662,7 +723,10 @@ def delete_model(model_selection):
                 torch.mps.empty_cache()
     
     try:
-        shutil.rmtree(target['path'])
+        if target.get("external") == "anima":
+            delete_anima_model()
+        else:
+            shutil.rmtree(target['path'])
         msg = f"Deleted: {target['display_name']} ({target['size_str']} freed)"
         print(msg)
     except Exception as e:
@@ -674,7 +738,7 @@ def delete_model(model_selection):
 
 def delete_all_models():
     """Delete all downloaded models."""
-    global pipe, current_model, current_lora_path
+    global pipe, current_device, current_model, current_lora_path
     
     models, total = scan_downloaded_models()
     
@@ -685,6 +749,7 @@ def delete_all_models():
         del pipe
         pipe = None
         current_model = None
+        current_device = None
         current_lora_path = None
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -696,7 +761,10 @@ def delete_all_models():
     
     for m in models:
         try:
-            shutil.rmtree(m['path'])
+            if m.get("external") == "anima":
+                delete_anima_model()
+            else:
+                shutil.rmtree(m['path'])
             deleted.append(m['display_name'])
         except Exception as e:
             errors.append(f"{m['display_name']}: {str(e)}")
@@ -776,8 +844,18 @@ def update_ui_for_model(model_choice):
     """Update UI visibility and defaults based on model selection."""
     is_flux = "FLUX" in model_choice
     is_zimage_full = "Full" in model_choice
+    is_anima = is_anima_model_choice(model_choice)
     
-    guidance_default = 3.5 if is_flux else 0.0
+    if is_anima:
+        guidance_default = ANIMA_DEFAULTS["guidance"]
+        height_default = ANIMA_DEFAULTS["height"]
+        width_default = ANIMA_DEFAULTS["width"]
+        steps_default = ANIMA_DEFAULTS["steps"]
+    else:
+        guidance_default = 3.5 if is_flux else 0.0
+        height_default = 512
+        width_default = 512
+        steps_default = 4
     
     return (
         gr.update(visible=is_flux),  # img2img_label
@@ -788,6 +866,9 @@ def update_ui_for_model(model_choice):
         gr.update(visible=is_zimage_full),  # lora_strength
         gr.update(visible=is_zimage_full),  # clear_lora_btn
         gr.update(value=guidance_default),  # guidance_scale
+        gr.update(value=height_default),  # height
+        gr.update(value=width_default),  # width
+        gr.update(value=steps_default),  # steps
     )
 
 
@@ -805,6 +886,7 @@ with gr.Blocks(title="Ultra Fast Image Gen") as demo:
     **Models:**
     - **FLUX.2-klein-4B (Int8):** 8GB, supports image-to-image editing (default)
     - **Z-Image Turbo (Quantized):** 3.5GB, fastest, no LoRA
+    - **Anima Turbo AIO Q4 (Metal):** local patched sd.cpp runner, defaults to 512x768 / 8 steps
     - **Z-Image Turbo (Full):** 24GB, slower, LoRA support
     
     **Resolutions:** Up to 2048px for txt2img. Image-to-image: 1K (16GB) or 1.5K (32GB+).
@@ -933,7 +1015,19 @@ with gr.Blocks(title="Ultra Fast Image Gen") as demo:
     model_choice.change(
         fn=update_ui_for_model,
         inputs=[model_choice],
-        outputs=[img2img_label, input_images, resolution_preset, lora_label, lora_file, lora_strength, clear_lora_btn, guidance_scale],
+        outputs=[
+            img2img_label,
+            input_images,
+            resolution_preset,
+            lora_label,
+            lora_file,
+            lora_strength,
+            clear_lora_btn,
+            guidance_scale,
+            height,
+            width,
+            steps,
+        ],
     )
     
     input_images.change(

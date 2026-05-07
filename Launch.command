@@ -82,15 +82,59 @@ fi
 # Activate virtual environment
 source venv/bin/activate
 
-# Install requirements if needed
-if [ ! -f "venv/.installed" ]; then
+# Install requirements if needed. Keep a requirements hash so double-click
+# launches pick up newly added dependencies after updates.
+REQ_HASH_FILE="venv/.requirements.sha256"
+CURRENT_REQ_HASH=$(shasum -a 256 requirements.txt | awk '{print $1}')
+INSTALLED_REQ_HASH=$(cat "$REQ_HASH_FILE" 2>/dev/null || true)
+
+if [ ! -f "venv/.installed" ] || [ "$CURRENT_REQ_HASH" != "$INSTALLED_REQ_HASH" ]; then
     echo ""
     echo "Installing dependencies (this may take a few minutes)..."
     pip install --upgrade pip
     pip install -r requirements.txt
+    echo "$CURRENT_REQ_HASH" > "$REQ_HASH_FILE"
     touch venv/.installed
     echo ""
     echo "Installation complete!"
+fi
+
+# Anima uses the patched sd.cpp Metal runner outside this repo. The model GGUF
+# is downloaded automatically on first Anima generation, but the runner itself
+# must exist first.
+echo ""
+echo "Checking Anima Turbo AIO Metal setup..."
+ANIMA_ROOT="${ULTRA_FAST_ANIMA_ROOT:-$HOME/anima-comfyui}"
+ANIMA_RUNNER="${ULTRA_FAST_ANIMA_RUNNER:-$ANIMA_ROOT/run_anima_aio_metal.sh}"
+ANIMA_MODEL="${ULTRA_FAST_ANIMA_MODEL:-$ANIMA_ROOT/sdcpp/models/Anima-P3-Turbo-AIO-Q4_K.gguf}"
+ANIMA_SDCLI="${ULTRA_FAST_ANIMA_SDCLI:-$ANIMA_ROOT/sdcpp-src/build-metal-im2col3d/bin/sd-cli}"
+export ULTRA_FAST_ANIMA_RUNNER="$ANIMA_RUNNER"
+export ULTRA_FAST_ANIMA_MODEL="$ANIMA_MODEL"
+export ULTRA_FAST_ANIMA_ROOT="$ANIMA_ROOT"
+export PYTHON_CMD="$(pwd)/venv/bin/python"
+
+if [ ! -x "$ANIMA_RUNNER" ] || [ ! -x "$ANIMA_SDCLI" ]; then
+    echo "Anima runner is not installed yet. Installing the patched Metal runner now..."
+    if ! bash "$(pwd)/scripts/setup_anima_metal_runner.sh"; then
+        echo ""
+        echo "Anima setup could not complete."
+        echo "Fix the message above, then run Launch.command again."
+        read -p "Press Enter to exit..."
+        exit 1
+    fi
+fi
+
+if [ ! -x "$ANIMA_RUNNER" ] || [ ! -x "$ANIMA_SDCLI" ]; then
+    echo "Anima setup did not finish cleanly."
+    read -p "Press Enter to exit..."
+    exit 1
+elif [ -f "$ANIMA_MODEL" ]; then
+    echo "Anima runner ready: $ANIMA_RUNNER"
+    echo "Anima model ready: $ANIMA_MODEL"
+else
+    echo "Anima runner ready: $ANIMA_RUNNER"
+    echo "Anima model not downloaded yet."
+    echo "It will auto-download on the first Anima generation."
 fi
 
 echo ""

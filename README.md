@@ -8,6 +8,7 @@ AI image generation and editing on Mac Silicon and CUDA. Generate images from te
 - **Image Editing:** Upload up to 6 reference images and transform them with natural language
 - **Multiple Models:** FLUX.2-klein and Z-Image Turbo
 - **Quantized Models:** Low memory usage with 4bit/int8 quantization
+- **Anima Turbo AIO:** Local patched Metal runner with Turbo LoRA baked into the GGUF
 - **LoRA Support:** Load custom LoRA adapters with Z-Image Full model
 - **Cross-Platform:** Apple Silicon (MPS) and NVIDIA GPUs (CUDA)
 
@@ -19,14 +20,17 @@ AI image generation and editing on Mac Silicon and CUDA. Generate images from te
 | FLUX.2-klein-9B (4bit SDNQ) | ~12GB @ 512px, ~20GB @ 1024px | Text-to-image + Image editing (Higher Quality) | Fast |
 | FLUX.2-klein-4B (Int8) | ~16GB | Text-to-image + Image editing | Fast |
 | Z-Image Turbo (Quantized) | ~8GB | Text-to-image | Fastest |
+| Anima Turbo AIO Q4 (Metal) | ~3GB model + unified memory | Text-to-image, baked Turbo LoRA | ~16s internal @ 512x768 / 8 steps |
 | Z-Image Turbo (Full) | ~24GB | Text-to-image + LoRA | Slower |
 
 ## Quick Start (1-Click)
 
 1. Download/clone the repo
 2. **Double-click `Launch.command`**
-3. First run will auto-install dependencies (~5 min)
-4. Browser opens automatically to the UI
+3. First run will auto-install dependencies (~5 min); later runs reinstall if `requirements.txt` changed
+4. The launcher installs/builds the patched Anima Metal runner if needed
+5. The Anima GGUF auto-downloads on first Anima generation
+6. Browser opens automatically to the UI
 
 ## Manual Installation
 
@@ -39,6 +43,22 @@ source venv/bin/activate
 
 pip install -r requirements.txt
 ```
+
+### Anima Fresh Install
+
+`Launch.command` runs this automatically when the Anima runner is missing:
+
+```bash
+scripts/setup_anima_metal_runner.sh
+```
+
+The setup script clones `stable-diffusion.cpp`, checks out the tested revision,
+applies the bundled ggml Metal patch for Anima VAE ops, builds `sd-cli` with
+Metal enabled, and writes `~/anima-comfyui/run_anima_aio_metal.sh`.
+
+The downloaded `Anima-P3-Turbo-AIO-Q4_K.gguf` already has the Anima Turbo LoRA
+merged in. The app does not need a separate `anima-turbo-lora-v0.1.safetensors`
+file for this model.
 
 ## Usage
 
@@ -56,6 +76,7 @@ Then open http://localhost:7860 in your browser.
 - **FLUX.2-klein-9B (4bit SDNQ):** Higher quality 9B model, more memory
 - **FLUX.2-klein-4B (Int8):** Alternative quantization, more memory
 - **Z-Image Turbo (Quantized):** Fastest text-to-image, no image editing
+- **Anima Turbo AIO Q4 (Metal):** Uses `~/anima-comfyui/run_anima_aio_metal.sh`; auto-downloads the Turbo AIO GGUF if missing and defaults to 512x768, 8 steps, CFG 1
 - **Z-Image Turbo (Full):** Use when you need LoRA support
 
 ### Image Editing (FLUX.2-klein)
@@ -70,14 +91,17 @@ Then open http://localhost:7860 in your browser.
 
 ```bash
 python generate.py "A beautiful sunset over mountains"
+python generate.py "anime portrait, detailed eyes" --model anima-aio-metal
 ```
 
 Options:
-- `--height`: Image height (default: 512)
+- `--height`: Image height (default: 512, Anima: 768)
 - `--width`: Image width (default: 512)
-- `--steps`: Inference steps (default: 5)
+- `--steps`: Inference steps (default: 5, Anima: 8)
 - `--seed`: Random seed (-1 for random)
 - `--output`: Output file path (default: output.png)
+- `--model`: `zimage-full` or `anima-aio-metal`
+- `--cfg-scale`: Anima CFG scale (default: 1.0)
 - `--lora`: Path to LoRA safetensors file
 - `--lora-strength`: LoRA strength multiplier (default: 1.0)
 
@@ -98,6 +122,19 @@ Options:
 | M2 Max | 768x768 | 7 | 31s |
 | M1 Max | 512x512 | 7 | 23s |
 
+### Anima Turbo AIO Q4 (Metal)
+
+Recommended settings:
+- Fast: 3 steps
+- Balanced/default: 8 steps
+- Quality/model-card default: 16 steps
+
+| Mac | Resolution | Steps | Time |
+|-----|------------|-------|------|
+| M2 Max | 512x768 | 3 | 8.82s internal / 11.63s wall |
+| M2 Max | 512x768 | 4 | 11.13s internal / 13.65s wall |
+| M2 Max | 512x768 | 8 | 15.62s internal / 18.69s wall |
+
 ## Memory Requirements
 
 | Model | RAM/VRAM Required |
@@ -107,11 +144,13 @@ Options:
 | FLUX.2-klein-4B (Int8) | 16GB |
 | Z-Image (Quantized) | 8GB |
 | Z-Image (Full) | 24GB+ |
+| Anima Turbo AIO Q4 (Metal) | 32GB recommended for local setup |
 
 ## Credits
 
 - [FLUX.2-klein-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) by Black Forest Labs
 - [Z-Image](https://github.com/Tongyi-MAI/Z-Image) by Alibaba
+- [Anima](https://huggingface.co/circlestone-labs/Anima) by Circlestone Labs
 - [SDNQ Quantization](https://huggingface.co/Disty0/FLUX.2-klein-4B-SDNQ-4bit-dynamic) by Disty0
 - [Int8 Quantization](https://huggingface.co/aydin99/FLUX.2-klein-4B-int8) using optimum-quanto
 

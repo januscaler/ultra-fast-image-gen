@@ -19,9 +19,18 @@ env/
 *.jpg
 *.jpeg
 
+# Local build/package artifacts
+build/
+dist/
+*.spec
+
 # OS
 .DS_Store
 Thumbs.db
+* alias
 
 # Gradio
 flagged/
+
+# Local agent metadata
+.serena/

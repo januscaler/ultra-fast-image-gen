@@ -11,12 +11,14 @@ import argparse
 # Enable fast-math for MPS
 os.environ["PYTORCH_MPS_FAST_MATH"] = "1"
 
-import torch
-from diffusers import ZImagePipeline, FlowMatchEulerDiscreteScheduler
+from anima_aio import ANIMA_DEFAULTS, ANIMA_MODEL_TYPE, generate_anima_aio
 
 
 def load_pipeline(device="mps"):
     """Load the full-precision Z-Image pipeline."""
+    import torch
+    from diffusers import ZImagePipeline, FlowMatchEulerDiscreteScheduler
+
     print("Loading Z-Image-Turbo (full precision)...")
     print(f"MPS available: {torch.backends.mps.is_available()}")
     print(f"PyTorch version: {torch.__version__}")
@@ -63,6 +65,8 @@ def generate(
     device: str = "mps",
 ):
     """Generate an image from a prompt."""
+    import torch
+
     if seed is None:
         seed = torch.randint(0, 2**32, (1,)).item()
 
@@ -90,20 +94,53 @@ def generate(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate images with Z-Image Turbo UINT4")
+    parser = argparse.ArgumentParser(description="Generate images with Z-Image Turbo or Anima AIO")
     parser.add_argument("prompt", type=str, help="Text prompt for image generation")
-    parser.add_argument("--height", type=int, default=512, help="Image height (default: 512)")
-    parser.add_argument("--width", type=int, default=512, help="Image width (default: 512)")
-    parser.add_argument("--steps", type=int, default=5, help="Inference steps (default: 5)")
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="zimage-full",
+        choices=["zimage-full", ANIMA_MODEL_TYPE],
+        help="Model/runtime to use (default: zimage-full)",
+    )
+    parser.add_argument("--height", type=int, default=None, help="Image height (default: 512, Anima: 768)")
+    parser.add_argument("--width", type=int, default=None, help="Image width (default: 512)")
+    parser.add_argument("--steps", type=int, default=None, help="Inference steps (default: 5, Anima: 8)")
     parser.add_argument("--seed", type=int, default=None, help="Random seed")
     parser.add_argument("--output", type=str, default="output.png", help="Output path")
     parser.add_argument("--device", type=str, default="mps", help="Device (mps, cuda, cpu)")
+    parser.add_argument("--cfg-scale", type=float, default=1.0, help="Anima CFG scale (default: 1.0)")
 
     # LoRA arguments
     parser.add_argument("--lora", type=str, default=None, help="Path to LoRA safetensors file")
     parser.add_argument("--lora-strength", type=float, default=1.0, help="LoRA strength (default: 1.0)")
 
     args = parser.parse_args()
+
+    if args.model == ANIMA_MODEL_TYPE:
+        args.height = args.height or ANIMA_DEFAULTS["height"]
+        args.width = args.width or ANIMA_DEFAULTS["width"]
+        args.steps = args.steps or ANIMA_DEFAULTS["steps"]
+    else:
+        args.height = args.height or 512
+        args.width = args.width or 512
+        args.steps = args.steps or 5
+
+    if args.model == ANIMA_MODEL_TYPE:
+        result = generate_anima_aio(
+            args.prompt,
+            height=args.height,
+            width=args.width,
+            steps=args.steps,
+            seed=-1 if args.seed is None else args.seed,
+            cfg_scale=args.cfg_scale,
+            output_path=args.output,
+        )
+        timing = f", gen: {result['generation_time']}" if result.get("generation_time") else ""
+        print(f"Saved to {result['path']} (seed: {result['seed']}{timing})")
+        return
+
+    import torch
 
     # Determine device
     device = args.device

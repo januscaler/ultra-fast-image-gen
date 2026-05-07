@@ -1,0 +1,294 @@
+diff --git a/src/ggml-metal/ggml-metal-device.cpp b/src/ggml-metal/ggml-metal-device.cpp
+index 89539bd..c78aac2 100644
+--- a/src/ggml-metal/ggml-metal-device.cpp
++++ b/src/ggml-metal/ggml-metal-device.cpp
+@@ -1686,0 +1687,20 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_im2col(ggml_meta
++ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_im2col_3d(ggml_metal_library_t lib, const ggml_tensor * op) {
++    assert(op->op == GGML_OP_IM2COL_3D);
++
++    GGML_ASSERT(op->src[1]->type == GGML_TYPE_F32);
++    GGML_ASSERT(op->type         == GGML_TYPE_F16 || op->type == GGML_TYPE_F32);
++
++    char base[256];
++    char name[256];
++
++    snprintf(base, 256, "kernel_op_im2col_3d_%s", ggml_type_name(op->type));
++    snprintf(name, 256, "%s", base);
++
++    ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
++    if (!res.pipeline) {
++        res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
++    }
++
++    return res;
++}
++
+diff --git a/src/ggml-metal/ggml-metal-device.h b/src/ggml-metal/ggml-metal-device.h
+index de43f81..4724b2d 100644
+--- a/src/ggml-metal/ggml-metal-device.h
++++ b/src/ggml-metal/ggml-metal-device.h
+@@ -147,0 +148 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_im2col
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_im2col_3d         (ggml_metal_library_t lib, const struct ggml_tensor * op);
+diff --git a/src/ggml-metal/ggml-metal-device.m b/src/ggml-metal/ggml-metal-device.m
+index 17d51b1..92089ee 100644
+--- a/src/ggml-metal/ggml-metal-device.m
++++ b/src/ggml-metal/ggml-metal-device.m
+@@ -1113,0 +1114,2 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
++        case GGML_OP_IM2COL_3D:
++            return op->src[1]->type == GGML_TYPE_F32 && (op->type == GGML_TYPE_F16 || op->type == GGML_TYPE_F32);
+@@ -1131,2 +1133 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+-            return (ggml_get_op_params_i32(op, 0) == 0) && (ggml_get_op_params_i32(op, 2) == 0) &&
+-                   (ggml_get_op_params_i32(op, 4) == 0) && (ggml_get_op_params_i32(op, 6) == 0);
++            return op->src[0]->type == GGML_TYPE_F32;
+diff --git a/src/ggml-metal/ggml-metal-impl.h b/src/ggml-metal/ggml-metal-impl.h
+index eb2253e..318a30f 100644
+--- a/src/ggml-metal/ggml-metal-impl.h
++++ b/src/ggml-metal/ggml-metal-impl.h
+@@ -649,0 +650,31 @@ typedef struct {
++typedef struct {
++    uint32_t s0;
++    uint32_t s1;
++    uint32_t s2;
++    uint32_t p0;
++    uint32_t p1;
++    uint32_t p2;
++    uint32_t d0;
++    uint32_t d1;
++    uint32_t d2;
++    uint32_t IC;
++    uint32_t ID;
++    uint32_t IH;
++    uint32_t IW;
++    uint32_t KD;
++    uint32_t KH;
++    uint32_t KW;
++    uint32_t OD;
++    uint32_t OH;
++    uint32_t OW;
++    uint64_t nb13;
++    uint64_t nb12;
++    uint64_t nb11;
++    uint64_t nb10;
++    uint64_t OH_OW;
++    uint64_t KH_KW;
++    uint64_t KD_KH_KW;
++    uint64_t IC_KD_KH_KW;
++    uint64_t N;
++} ggml_metal_kargs_im2col_3d;
++
+@@ -992,0 +1024,8 @@ typedef struct {
++    int32_t  lp0;
++    int32_t  rp0;
++    int32_t  lp1;
++    int32_t  rp1;
++    int32_t  lp2;
++    int32_t  rp2;
++    int32_t  lp3;
++    int32_t  rp3;
+diff --git a/src/ggml-metal/ggml-metal-ops.cpp b/src/ggml-metal/ggml-metal-ops.cpp
+index 3cda21b..b572bf3 100644
+--- a/src/ggml-metal/ggml-metal-ops.cpp
++++ b/src/ggml-metal/ggml-metal-ops.cpp
+@@ -384,0 +385,4 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
++        case GGML_OP_IM2COL_3D:
++            {
++                n_fuse = ggml_metal_op_im2col_3d(ctx, idx);
++            } break;
+@@ -3625,0 +3630,62 @@ int ggml_metal_op_im2col(ggml_metal_op_t ctx, int idx) {
++int ggml_metal_op_im2col_3d(ggml_metal_op_t ctx, int idx) {
++    ggml_tensor * op = ctx->node(idx);
++    ggml_tensor * dst = op;
++    const ggml_tensor * src0 = op->src[0];
++    const ggml_tensor * src1 = op->src[1];
++
++    ggml_metal_library_t lib = ctx->lib;
++    ggml_metal_encoder_t enc = ctx->enc;
++
++    GGML_TENSOR_BINARY_OP_LOCALS;
++
++    ggml_metal_kargs_im2col_3d args = {
++        /*.s0           =*/ (uint32_t) ((const int32_t *) op->op_params)[0],
++        /*.s1           =*/ (uint32_t) ((const int32_t *) op->op_params)[1],
++        /*.s2           =*/ (uint32_t) ((const int32_t *) op->op_params)[2],
++        /*.p0           =*/ (uint32_t) ((const int32_t *) op->op_params)[3],
++        /*.p1           =*/ (uint32_t) ((const int32_t *) op->op_params)[4],
++        /*.p2           =*/ (uint32_t) ((const int32_t *) op->op_params)[5],
++        /*.d0           =*/ (uint32_t) ((const int32_t *) op->op_params)[6],
++        /*.d1           =*/ (uint32_t) ((const int32_t *) op->op_params)[7],
++        /*.d2           =*/ (uint32_t) ((const int32_t *) op->op_params)[8],
++        /*.IC           =*/ (uint32_t) ((const int32_t *) op->op_params)[9],
++        /*.ID           =*/ (uint32_t) ne12,
++        /*.IH           =*/ (uint32_t) ne11,
++        /*.IW           =*/ (uint32_t) ne10,
++        /*.KD           =*/ (uint32_t) ne02,
++        /*.KH           =*/ (uint32_t) ne01,
++        /*.KW           =*/ (uint32_t) ne00,
++        /*.OD           =*/ 0,
++        /*.OH           =*/ (uint32_t) ne2,
++        /*.OW           =*/ (uint32_t) ne1,
++        /*.nb13         =*/ nb13,
++        /*.nb12         =*/ nb12,
++        /*.nb11         =*/ nb11,
++        /*.nb10         =*/ nb10,
++        /*.OH_OW        =*/ 0,
++        /*.KH_KW        =*/ 0,
++        /*.KD_KH_KW     =*/ 0,
++        /*.IC_KD_KH_KW  =*/ 0,
++        /*.N            =*/ 0,
++    };
++
++    args.N           = ne13 / args.IC;
++    args.OD          = ne3 / args.N;
++    args.OH_OW       = (uint64_t) args.OH * args.OW;
++    args.KH_KW       = (uint64_t) args.KH * args.KW;
++    args.KD_KH_KW    = (uint64_t) args.KD * args.KH_KW;
++    args.IC_KD_KH_KW = (uint64_t) args.IC * args.KD_KH_KW;
++
++    auto pipeline = ggml_metal_library_get_pipeline_im2col_3d(lib, op);
++
++    ggml_metal_encoder_set_pipeline(enc, pipeline);
++    ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(src1),       1);
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         2);
++
++    const uint64_t total = args.N * args.OD * args.OH * args.OW;
++    ggml_metal_encoder_dispatch_threadgroups(enc, total, 1, 1, 1, 1, 1);
++
++    return 1;
++}
++
+@@ -3950,0 +4017,9 @@ int ggml_metal_op_pad(ggml_metal_op_t ctx, int idx) {
++    const int32_t lp0 = ggml_get_op_params_i32(op, 0);
++    const int32_t rp0 = ggml_get_op_params_i32(op, 1);
++    const int32_t lp1 = ggml_get_op_params_i32(op, 2);
++    const int32_t rp1 = ggml_get_op_params_i32(op, 3);
++    const int32_t lp2 = ggml_get_op_params_i32(op, 4);
++    const int32_t rp2 = ggml_get_op_params_i32(op, 5);
++    const int32_t lp3 = ggml_get_op_params_i32(op, 6);
++    const int32_t rp3 = ggml_get_op_params_i32(op, 7);
++
+@@ -3967 +4042,9 @@ int ggml_metal_op_pad(ggml_metal_op_t ctx, int idx) {
+-        /*.nb3  =*/ nb3
++        /*.nb3  =*/ nb3,
++        /*.lp0  =*/ lp0,
++        /*.rp0  =*/ rp0,
++        /*.lp1  =*/ lp1,
++        /*.rp1  =*/ rp1,
++        /*.lp2  =*/ lp2,
++        /*.rp2  =*/ rp2,
++        /*.lp3  =*/ lp3,
++        /*.rp3  =*/ rp3,
+diff --git a/src/ggml-metal/ggml-metal-ops.h b/src/ggml-metal/ggml-metal-ops.h
+index 50e3c5c..ffc0bff 100644
+--- a/src/ggml-metal/ggml-metal-ops.h
++++ b/src/ggml-metal/ggml-metal-ops.h
+@@ -76,0 +77 @@ int ggml_metal_op_im2col            (ggml_metal_op_t ctx, int idx);
++int ggml_metal_op_im2col_3d         (ggml_metal_op_t ctx, int idx);
+diff --git a/src/ggml-metal/ggml-metal.metal b/src/ggml-metal/ggml-metal.metal
+index 2074211..0b15ee5 100644
+--- a/src/ggml-metal/ggml-metal.metal
++++ b/src/ggml-metal/ggml-metal.metal
+@@ -4478,0 +4479,60 @@ template [[host_name("kernel_im2col_f16")]] kernel im2col_t kernel_im2col<half>;
++template <typename T>
++kernel void kernel_op_im2col_3d(
++        constant ggml_metal_kargs_im2col_3d & args,
++        device   const uchar * src1c,
++        device         char  * dstc,
++        uint tpig[[thread_position_in_grid]]) {
++    const uint64_t total = args.N * args.OD * args.OH * args.OW;
++    if (tpig >= total) {
++        return;
++    }
++
++    device T * dst = (device T *) dstc;
++
++    uint64_t idx = tpig;
++
++    const uint64_t iow = idx % args.OW;
++    idx /= args.OW;
++
++    const uint64_t ioh = idx % args.OH;
++    idx /= args.OH;
++
++    const uint64_t iod = idx % args.OD;
++    idx /= args.OD;
++
++    const uint64_t in = idx;
++
++    uint64_t dst_base_offset = ((in*args.OD + iod)*args.OH + ioh)*args.OW + iow;
++    dst_base_offset *= args.IC_KD_KH_KW;
++
++    for (uint32_t iic = 0; iic < args.IC; ++iic) {
++        const uint64_t src_offset0 = (in*args.IC + iic)*args.nb13;
++
++        for (uint32_t ikd = 0; ikd < args.KD; ++ikd) {
++            for (uint32_t ikh = 0; ikh < args.KH; ++ikh) {
++                for (uint32_t ikw = 0; ikw < args.KW; ++ikw) {
++                    const int32_t iiw = (int32_t) iow*args.s0 + ikw*args.d0 - args.p0;
++                    const int32_t iih = (int32_t) ioh*args.s1 + ikh*args.d1 - args.p1;
++                    const int32_t iid = (int32_t) iod*args.s2 + ikd*args.d2 - args.p2;
++
++                    const uint64_t dst_idx = dst_base_offset + iic*args.KD_KH_KW + ikd*args.KH_KW + ikh*args.KW + ikw;
++
++                    T val = T(0.0f);
++                    if (iid >= 0 && iid < args.ID && iih >= 0 && iih < args.IH && iiw >= 0 && iiw < args.IW) {
++                        const uint64_t src_offset = src_offset0 + iid*args.nb12 + iih*args.nb11 + iiw*args.nb10;
++                        const device const uchar * src_bytes = src1c + src_offset;
++                        val = T(*reinterpret_cast<const device float *>(src_bytes));
++                    }
++
++                    dst[dst_idx] = val;
++                }
++            }
++        }
++    }
++}
++
++typedef decltype(kernel_op_im2col_3d<float>) kernel_op_im2col_3d_t;
++
++template [[host_name("kernel_op_im2col_3d_f32")]] kernel kernel_op_im2col_3d_t kernel_op_im2col_3d<float>;
++template [[host_name("kernel_op_im2col_3d_f16")]] kernel kernel_op_im2col_3d_t kernel_op_im2col_3d<half>;
++
+@@ -5063,2 +5123,2 @@ kernel void kernel_pad_f32(
+-    device  const char * src0,
+-    device        char * dst,
++    device const char * src0,
++    device       char * dst,
+@@ -5073,16 +5133 @@ kernel void kernel_pad_f32(
+-    const int64_t i03 = i3;
+-    const int64_t i02 = i2;
+-    const int64_t i01 = i1;
+-
+-    device const float * src0_ptr = (device const float *) (src0 + i03*args.nb03 + i02*args.nb02 + i01*args.nb01);
+-    device       float * dst_ptr  = (device       float *) (dst  +  i3*args.nb3  +  i2*args.nb2  +  i1*args.nb1);
+-
+-    if (i1 < args.ne01 && i2 < args.ne02 && i3 < args.ne03) {
+-        for (int i0 = tpitg.x; i0 < args.ne0; i0 += ntg.x) {
+-            if (i0 < args.ne00) {
+-                dst_ptr[i0] = src0_ptr[i0];
+-            } else {
+-                dst_ptr[i0] = 0.0f;
+-            }
+-        }
+-
++    if (i1 >= args.ne1 || i2 >= args.ne2 || i3 >= args.ne3) {
+@@ -5091,0 +5137,3 @@ kernel void kernel_pad_f32(
++    const int64_t dst_base_bytes = i3*args.nb3 + i2*args.nb2 + i1*args.nb1;
++    device float * dst_ptr = (device float *) (dst + dst_base_bytes);
++
+@@ -5093 +5141,14 @@ kernel void kernel_pad_f32(
+-        dst_ptr[i0] = 0.0f;
++        const int64_t src_i0 = i0 - args.lp0;
++        const int64_t src_i1 = i1 - args.lp1;
++        const int64_t src_i2 = i2 - args.lp2;
++        const int64_t src_i3 = i3 - args.lp3;
++
++        if (src_i0 >= 0 && src_i0 < args.ne00 &&
++            src_i1 >= 0 && src_i1 < args.ne01 &&
++            src_i2 >= 0 && src_i2 < args.ne02 &&
++            src_i3 >= 0 && src_i3 < args.ne03) {
++            const int64_t src_offset_bytes = src_i3*args.nb03 + src_i2*args.nb02 + src_i1*args.nb01 + src_i0*args.nb00;
++            dst_ptr[i0] = ((const device float *) (src0 + src_offset_bytes))[0];
++        } else {
++            dst_ptr[i0] = 0.0f;
++        }
