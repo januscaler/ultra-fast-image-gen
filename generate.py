@@ -11,7 +11,7 @@ import argparse
 # Enable fast-math for MPS
 os.environ["PYTORCH_MPS_FAST_MATH"] = "1"
 
-from anima_aio import ANIMA_DEFAULTS, ANIMA_MODEL_TYPE, generate_anima_aio
+from anima_aio import ANIMA_DEFAULTS, ANIMA_MODEL_TYPE, ANIMA_PRESETS, generate_anima_aio, get_anima_preset
 
 
 def load_pipeline(device="mps"):
@@ -110,6 +110,13 @@ def main():
     parser.add_argument("--output", type=str, default="output.png", help="Output path")
     parser.add_argument("--device", type=str, default="mps", help="Device (mps, cuda, cpu)")
     parser.add_argument("--cfg-scale", type=float, default=1.0, help="Anima CFG scale (default: 1.0)")
+    parser.add_argument(
+        "--anima-preset",
+        type=str,
+        default="Balanced",
+        choices=list(ANIMA_PRESETS.keys()),
+        help="Anima preset: Fast=3 steps + cache, Balanced=8 + cache, Quality=16 no cache",
+    )
 
     # LoRA arguments
     parser.add_argument("--lora", type=str, default=None, help="Path to LoRA safetensors file")
@@ -118,15 +125,17 @@ def main():
     args = parser.parse_args()
 
     if args.model == ANIMA_MODEL_TYPE:
+        anima_preset = get_anima_preset(args.anima_preset)
         args.height = args.height or ANIMA_DEFAULTS["height"]
         args.width = args.width or ANIMA_DEFAULTS["width"]
-        args.steps = args.steps or ANIMA_DEFAULTS["steps"]
+        args.steps = args.steps or anima_preset["steps"]
     else:
         args.height = args.height or 512
         args.width = args.width or 512
         args.steps = args.steps or 5
 
     if args.model == ANIMA_MODEL_TYPE:
+        anima_preset = get_anima_preset(args.anima_preset)
         result = generate_anima_aio(
             args.prompt,
             height=args.height,
@@ -134,10 +143,14 @@ def main():
             steps=args.steps,
             seed=-1 if args.seed is None else args.seed,
             cfg_scale=args.cfg_scale,
+            cache_mode=anima_preset["cache_mode"],
             output_path=args.output,
         )
         timing = f", gen: {result['generation_time']}" if result.get("generation_time") else ""
-        print(f"Saved to {result['path']} (seed: {result['seed']}{timing})")
+        print(
+            f"Saved to {result['path']} "
+            f"(seed: {result['seed']}, preset: {args.anima_preset}, cache: {result.get('cache_mode')}{timing})"
+        )
         return
 
     import torch

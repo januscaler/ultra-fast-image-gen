@@ -30,6 +30,24 @@ ANIMA_DEFAULTS = {
     "guidance": 1.0,
 }
 
+ANIMA_PRESETS = {
+    "Fast": {
+        "steps": 3,
+        "cache_mode": "spectrum",
+        "description": "fast preview",
+    },
+    "Balanced": {
+        "steps": 8,
+        "cache_mode": "spectrum",
+        "description": "default speed/quality",
+    },
+    "Quality": {
+        "steps": 16,
+        "cache_mode": "none",
+        "description": "fuller denoise pass",
+    },
+}
+
 ANIMA_MODEL_REPO_ID = "n-Arno/Anima-P3-Turbo-AIO-Q4_K"
 ANIMA_MODEL_FILENAME = "Anima-P3-Turbo-AIO-Q4_K.gguf"
 DEFAULT_ANIMA_OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "Pictures", "ultra-fast-image-gen")
@@ -53,6 +71,12 @@ def is_anima_model_choice(model_choice: str | None) -> bool:
     return model_choice == ANIMA_MODEL_CHOICE or (
         isinstance(model_choice, str) and model_choice.startswith("Anima Turbo AIO")
     )
+
+
+def get_anima_preset(preset_name: str | None) -> dict[str, Any]:
+    if preset_name in ANIMA_PRESETS:
+        return ANIMA_PRESETS[preset_name]
+    return ANIMA_PRESETS["Balanced"]
 
 
 def get_anima_status() -> tuple[bool, str]:
@@ -177,6 +201,7 @@ def generate_anima_aio(
     output_dir: str | None = None,
     output_path: str | None = None,
     negative_prompt: str | None = None,
+    cache_mode: str | None = "spectrum",
     timeout: int = 600,
 ) -> dict[str, Any]:
     """Generate an image through the local Anima AIO Metal runner."""
@@ -217,6 +242,8 @@ def generate_anima_aio(
             "PYTHON_CMD": sys.executable,
         }
     )
+    if cache_mode:
+        env["CACHE_MODE"] = cache_mode
     if negative_prompt:
         env["NEGATIVE_PROMPT"] = negative_prompt
 
@@ -241,6 +268,7 @@ def generate_anima_aio(
     resolved_seed = _parse_first(r"generating image:\s+\d+/\d+\s+-\s+seed\s+(\d+)", log_text)
     generation_time = _parse_first(r"generate_image completed in ([0-9.]+s)", log_text)
     wall_time = _parse_first(r"\breal\s+([0-9.]+)", log_text)
+    spectrum_skipped = _parse_first(r"Spectrum skipped ([0-9]+/[0-9]+ steps)", log_text)
 
     return {
         "image": image,
@@ -249,5 +277,7 @@ def generate_anima_aio(
         "log_path": str(log_path),
         "generation_time": generation_time,
         "wall_time": f"{wall_time}s" if wall_time else None,
+        "cache_mode": cache_mode or "none",
+        "spectrum_skipped": spectrum_skipped,
         "log": log_text,
     }

@@ -140,6 +140,7 @@ Useful env overrides:
 
 Defaults:
   STEPS=8 WIDTH=512 HEIGHT=768 CFG_SCALE=1 SAMPLING_METHOD=er_sde SCHEDULER=smoothstep CACHE_MODE=spectrum
+  Set CACHE_MODE=none to disable cache for quality mode.
 USAGE
   exit 0
 fi
@@ -203,11 +204,14 @@ cmd=(
   -H "$HEIGHT"
   --sampling-method "$SAMPLING_METHOD"
   --scheduler "$SCHEDULER"
-  --cache-mode "$CACHE_MODE"
   --seed "$SEED"
   -p "$PROMPT"
   -o "$OUT"
 )
+
+if [[ -n "$CACHE_MODE" && "$CACHE_MODE" != "none" && "$CACHE_MODE" != "off" ]]; then
+  cmd+=(--cache-mode "$CACHE_MODE")
+fi
 
 if [[ -n "$NEGATIVE_PROMPT" ]]; then
   cmd+=(--negative-prompt "$NEGATIVE_PROMPT")

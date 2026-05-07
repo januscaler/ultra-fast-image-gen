@@ -25,8 +25,10 @@ from anima_aio import (
     ANIMA_DEFAULTS,
     ANIMA_MODEL_CHOICE,
     ANIMA_MODEL_TYPE,
+    ANIMA_PRESETS,
     delete_anima_model,
     generate_anima_aio,
+    get_anima_preset,
     get_anima_storage_entry,
     is_anima_model_choice,
 )
@@ -395,6 +397,7 @@ def generate_image(
     input_images,
     lora_file, 
     lora_strength,
+    anima_preset,
     auto_save,
     output_dir
 ):
@@ -409,6 +412,7 @@ def generate_image(
         seed = torch.randint(0, 2**32, (1,)).item()
 
     if current_model == ANIMA_MODEL_TYPE:
+        preset = get_anima_preset(anima_preset)
         result = generate_anima_aio(
             prompt,
             height=int(height),
@@ -416,9 +420,13 @@ def generate_image(
             steps=int(steps),
             seed=int(seed),
             cfg_scale=float(guidance),
+            cache_mode=preset["cache_mode"],
             output_dir=output_dir if auto_save else None,
         )
         cfg_info = f" | CFG: {guidance}" if guidance > 0 else ""
+        cache_info = f" | Cache: {result.get('cache_mode', preset['cache_mode'])}"
+        if result.get("spectrum_skipped"):
+            cache_info += f" ({result['spectrum_skipped']} skipped)"
         timing = ""
         if result.get("generation_time"):
             timing += f" | Gen: {result['generation_time']}"
@@ -427,8 +435,8 @@ def generate_image(
         save_info = f" | Saved: {result['path']}" if auto_save else ""
         info = (
             f"Seed: {result['seed']} | Model: Anima Turbo AIO Q4 (Metal) | "
-            f"Mode: txt2img | Device: Metal | {int(width)}x{int(height)} | Steps: {int(steps)}"
-            f"{cfg_info}{timing}{save_info}"
+            f"Preset: {anima_preset or 'Balanced'} | Device: Metal | {int(width)}x{int(height)} | "
+            f"Steps: {int(steps)}{cfg_info}{cache_info}{timing}{save_info}"
         )
         return result["image"], info
 
@@ -865,10 +873,20 @@ def update_ui_for_model(model_choice):
         gr.update(visible=is_zimage_full),  # lora_file
         gr.update(visible=is_zimage_full),  # lora_strength
         gr.update(visible=is_zimage_full),  # clear_lora_btn
+        gr.update(visible=is_anima, value="Balanced"),  # anima_preset
         gr.update(value=guidance_default),  # guidance_scale
         gr.update(value=height_default),  # height
         gr.update(value=width_default),  # width
         gr.update(value=steps_default),  # steps
+    )
+
+
+def update_anima_preset(preset_name):
+    """Apply Anima preset defaults to visible generation controls."""
+    preset = get_anima_preset(preset_name)
+    return (
+        gr.update(value=preset["steps"]),
+        gr.update(value=ANIMA_DEFAULTS["guidance"]),
     )
 
 
@@ -934,6 +952,14 @@ with gr.Blocks(title="Ultra Fast Image Gen") as demo:
             with gr.Row():
                 steps = gr.Slider(1, 50, value=4, step=1, label="Steps")
                 seed = gr.Number(value=-1, label="Seed (-1 = random)")
+
+            anima_preset = gr.Radio(
+                choices=list(ANIMA_PRESETS.keys()),
+                value="Balanced",
+                label="Anima Mode",
+                info="Fast: 3 steps + Spectrum, Balanced: 8 + Spectrum, Quality: 16 without cache",
+                visible=False,
+            )
 
             with gr.Row():
                 guidance_scale = gr.Slider(
@@ -1023,11 +1049,18 @@ with gr.Blocks(title="Ultra Fast Image Gen") as demo:
             lora_file,
             lora_strength,
             clear_lora_btn,
+            anima_preset,
             guidance_scale,
             height,
             width,
             steps,
         ],
+    )
+
+    anima_preset.change(
+        fn=update_anima_preset,
+        inputs=[anima_preset],
+        outputs=[steps, guidance_scale],
     )
     
     input_images.change(
@@ -1047,7 +1080,7 @@ with gr.Blocks(title="Ultra Fast Image Gen") as demo:
         inputs=[
             prompt, height, width, steps, seed, guidance_scale, device,
             model_choice, input_images, lora_file, lora_strength,
-            auto_save, output_dir
+            anima_preset, auto_save, output_dir
         ],
         outputs=[output_image, seed_info],
     )

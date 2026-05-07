@@ -125,9 +125,9 @@ Options:
 ### Anima Turbo AIO Q4 (Metal)
 
 Recommended settings:
-- Fast: 3 steps
-- Balanced/default: 8 steps
-- Quality/model-card default: 16 steps
+- Fast: 3 steps with Spectrum cache
+- Balanced/default: 8 steps with Spectrum cache
+- Quality/model-card default: 16 steps with cache disabled
 
 | Mac | Resolution | Steps | Time |
 |-----|------------|-------|------|
