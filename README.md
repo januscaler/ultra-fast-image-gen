@@ -89,21 +89,66 @@ Then open http://localhost:7860 in your browser.
 
 ### Command Line
 
+Each model has its own sub-command with the options it needs:
+
 ```bash
-python generate.py "A beautiful sunset over mountains"
-python generate.py "anime portrait, detailed eyes" --model anima-aio-metal
+# Z-Image Turbo (quantized) — fastest, ~3.5 GB
+python generate.py zimage-quant a beautiful sunset over mountains
+
+# Z-Image Turbo (full precision) — with optional LoRA
+python generate.py zimage-full a beautiful sunset --lora my.safetensors --lora-strength 0.8
+
+# FLUX.2-klein-4B (4bit SDNQ)
+python generate.py flux2-4b-sdnq a beautiful sunset --guidance 3.5 --steps 28
+
+# FLUX.2-klein-4B (Int8)
+python generate.py flux2-4b-int8 a beautiful sunset --guidance 3.5 --steps 28
+
+# FLUX.2-klein-9B (4bit SDNQ) — higher quality
+python generate.py flux2-9b-sdnq a beautiful sunset --guidance 3.5 --steps 28
+
+# Image-to-image editing (FLUX.2-klein models only)
+python generate.py flux2-4b-sdnq transform the fox into a wolf --input-images ref.png
+
+# Anima Turbo AIO (Metal runner, baked Turbo LoRA)
+python generate.py anima anime portrait, detailed eyes --anima-preset Balanced
 ```
 
-Options:
-- `--height`: Image height (default: 512, Anima: 768)
-- `--width`: Image width (default: 512)
-- `--steps`: Inference steps (default: 5, Anima: 8)
-- `--seed`: Random seed (-1 for random)
-- `--output`: Output file path (default: output.png)
-- `--model`: `zimage-full` or `anima-aio-metal`
-- `--cfg-scale`: Anima CFG scale (default: 1.0)
-- `--lora`: Path to LoRA safetensors file
-- `--lora-strength`: LoRA strength multiplier (default: 1.0)
+Quotes around the prompt are optional — all words before the first `--flag` are joined into the prompt.
+
+**Common options** (all sub-commands):
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--height` | 512 (Anima: 768) | Image height in pixels |
+| `--width` | 512 | Image width in pixels |
+| `--seed` | random | Fixed seed for reproducibility |
+| `--output` | output.png | Output file path |
+| `--device` | mps | `mps`, `cuda`, or `cpu` |
+
+**Z-Image options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--steps` | 5 | Inference steps |
+| `--lora` | — | Path to LoRA `.safetensors` (`zimage-full` only) |
+| `--lora-strength` | 1.0 | LoRA weight (`zimage-full` only) |
+
+**FLUX.2-klein options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--steps` | 28 | Inference steps |
+| `--guidance` | 3.5 | Classifier-free guidance scale |
+| `--input-images` | — | Up to 6 reference images for editing |
+
+**Anima options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--steps` | from preset | Inference steps (overrides the preset) |
+| `--cfg-scale` | 1.0 | Anima CFG scale |
+| `--anima-preset` | Balanced | `Fast` (3 steps), `Balanced` (8), or `Quality` (16) |
 
 ## Benchmarks
 
