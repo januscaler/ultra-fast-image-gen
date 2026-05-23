@@ -8,6 +8,7 @@ Supports all models available through the Gradio web interface:
   flux2-4b-int8   FLUX.2-klein-4B (int8 quantized, img2img)
   flux2-4b-sdnq   FLUX.2-klein-4B (4bit SDNQ, img2img)
   flux2-9b-sdnq   FLUX.2-klein-9B (4bit SDNQ, higher quality, img2img)
+  flux2-4b-uncensored  FLUX.2-klein-4B + uncensored Qwen3 GGUF text encoder
   anima           Anima Turbo AIO Q4 (Metal runner, baked Turbo LoRA)
 
 Usage examples:
@@ -330,6 +331,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="FLUX.2-klein-9B 4bit SDNQ (higher quality, supports img2img)",
     )
 
+    # flux2-4b-uncensored (SDNQ backbone + abliterated Qwen3 GGUF text encoder)
+    sub.add_parser(
+        "flux2-4b-uncensored",
+        parents=[common, flux_opts],
+        help="FLUX.2-klein-4B with uncensored Qwen3 text encoder (q4_k_m GGUF, img2img)",
+    )
+
     # anima (external Metal runner, baked Turbo LoRA)
     p = sub.add_parser(
         "anima",
@@ -383,6 +391,13 @@ def main():
         from loaders import load_flux2_klein_9b_sdnq_pipeline
 
         run_flux2_klein(args, load_flux2_klein_9b_sdnq_pipeline)
+
+    elif args.model == "flux2-4b-uncensored":
+        from loaders import load_flux2_klein_uncensored_pipeline
+
+        run_flux2_klein(
+            args, lambda device: load_flux2_klein_uncensored_pipeline(device, quant="q4_k_m")
+        )
 
     elif args.model == "anima":
         run_anima(args)

@@ -45,6 +45,7 @@ from loaders import (
     load_flux2_klein_pipeline,
     load_flux2_klein_sdnq_pipeline,
     load_flux2_klein_9b_sdnq_pipeline,
+    load_flux2_klein_uncensored_pipeline,
 )
 
 DEFAULT_OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "Pictures", "ultra-fast-image-gen")
@@ -72,6 +73,7 @@ MODEL_CHOICES = [
     "FLUX.2-klein-4B (4bit SDNQ - Low VRAM)",
     "FLUX.2-klein-9B (4bit SDNQ - Higher Quality)",
     "FLUX.2-klein-4B (Int8)",
+    "FLUX.2-klein-4B Uncensored (q4_k_m TE)",
     "Z-Image Turbo (Quantized - Fast)",
     ANIMA_MODEL_CHOICE,
     "Z-Image Turbo (Full - LoRA support)",
@@ -94,6 +96,8 @@ def load_pipeline(model_choice: str, device: str = "mps"):
     
     if is_anima_model_choice(model_choice):
         model_type = ANIMA_MODEL_TYPE
+    elif "Uncensored" in model_choice:
+        model_type = "flux2-klein-uncensored"
     elif "Quantized" in model_choice:
         model_type = "zimage-quant"
     elif "Full" in model_choice:
@@ -136,6 +140,8 @@ def load_pipeline(model_choice: str, device: str = "mps"):
     
     if model_type == "flux2-klein-int8":
         pipe = load_flux2_klein_pipeline(device)
+    elif model_type == "flux2-klein-uncensored":
+        pipe = load_flux2_klein_uncensored_pipeline(device, quant="q4_k_m")
     elif model_type == "flux2-klein-sdnq":
         pipe = load_flux2_klein_sdnq_pipeline(device)
     elif model_type == "flux2-klein-9b-sdnq":
@@ -273,7 +279,7 @@ def generate_image(
     print_memory("Before generation")
     
     with torch.inference_mode():
-        if current_model in ("flux2-klein-int8", "flux2-klein-sdnq", "flux2-klein-9b-sdnq"):
+        if current_model in ("flux2-klein-int8", "flux2-klein-sdnq", "flux2-klein-9b-sdnq", "flux2-klein-uncensored"):
             images_to_process = None
             if input_images is not None and len(input_images) > 0:
                 img_w, img_h = int(width), int(height)
@@ -348,6 +354,7 @@ def generate_image(
         "flux2-klein-int8": "FLUX.2-klein-4B (int8)",
         "flux2-klein-sdnq": "FLUX.2-klein-4B (4bit)",
         "flux2-klein-9b-sdnq": "FLUX.2-klein-9B (4bit)",
+        "flux2-klein-uncensored": "FLUX.2-klein-4B Uncensored (q4_k_m TE)",
     }.get(current_model, current_model)
     
     info = f"Seed: {seed} | Model: {model_short} | Mode: {mode} | Device: {device}{cfg_info}{lora_info}"
