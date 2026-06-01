@@ -140,7 +140,7 @@ python generate.py flux2-4b-sdnq transform the fox into a wolf --input-images re
 python generate.py anima anime portrait, detailed eyes --anima-preset Balanced
 
 # Bonsai Image 4B ternary (MLX, Apple Silicon) — needs the bonsai extra
-python generate.py bonsai a red fox in snow --steps 4
+python generate.py bonsai-ternary a red fox in snow --steps 4
 ```
 
 Quotes around the prompt are optional — all words before the first `--flag` are joined into the prompt.

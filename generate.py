@@ -9,7 +9,7 @@ Supports all models available through the Gradio web interface:
   flux2-4b-sdnq   FLUX.2-klein-4B (4bit SDNQ, img2img)
   flux2-9b-sdnq   FLUX.2-klein-9B (4bit SDNQ, higher quality, img2img)
   anima           Anima Turbo AIO Q4 (Metal runner, baked Turbo LoRA)
-  bonsai          Bonsai Image 4B ternary (MLX, Apple Silicon)
+  bonsai-ternary  Bonsai Image 4B ternary (MLX, Apple Silicon)
 
 Usage examples:
   python generate.py zimage-quant "a red fox in snow" --steps 5
@@ -17,7 +17,7 @@ Usage examples:
   python generate.py flux2-4b-sdnq "a red fox" --guidance 3.5 --steps 28
   python generate.py flux2-4b-int8 "edit the fox" --input-images ref.png --guidance 3.5
   python generate.py anima "a red fox" --anima-preset Balanced
-  python generate.py bonsai "a red fox" --steps 4
+  python generate.py bonsai-ternary "a red fox" --steps 4
 """
 
 import os
@@ -389,9 +389,9 @@ def build_parser() -> argparse.ArgumentParser:
     # Anima uses its own height/width defaults (see run_anima), so unset -> None.
     p.set_defaults(height=None, width=None)
 
-    # bonsai (ternary, MLX, Apple Silicon)
+    # bonsai-ternary (MLX, Apple Silicon)
     p = sub.add_parser(
-        "bonsai",
+        "bonsai-ternary",
         parents=[common],
         help="Bonsai Image 4B ternary (MLX, Apple Silicon)",
     )
@@ -433,7 +433,7 @@ def main():
     elif args.model == "anima":
         run_anima(args)
 
-    elif args.model == "bonsai":
+    elif args.model == "bonsai-ternary":
         run_bonsai(args)
 
 
