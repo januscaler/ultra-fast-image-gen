@@ -52,5 +52,5 @@ sdnq = { git = "https://github.com/Disty0/sdnq.git" }
 # prism-image-studio imports). Also wins over prism-image-studio's own pinned
 # mflux git rev, so the two don't fight over the `mflux` dist. Only consulted
 # when the `bonsai` extra is resolved.
-mflux = { git = "https://github.com/PrismML-Eng/mflux-prism.git" }
-prism-image-studio = { git = "https://github.com/PrismML-Eng/image-studio.git" }
+mflux = { git = "https://github.com/PrismML-Eng/mflux-prism.git", rev = "bcd13e83b7fcfd76186c98ef322dd9cf28e996c1" }
+prism-image-studio = { git = "https://github.com/PrismML-Eng/image-studio.git", rev = "3d895c0ceec95de1e094e22d7386ff4e72c8c912" }
