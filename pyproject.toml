@@ -22,11 +22,35 @@ dependencies = [
     "sdnq",
     "setuptools>=80.9.0",
     "kernels>=0.11.7",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+# Bonsai Image 4B (ternary, MLX) -- opt-in, Apple Silicon only, python >=3.11
+# (the prism-image-studio floor). Enable with:  uv sync --extra bonsai.
+# Runs on stock pypi mlx (prebuilt wheel, no Xcode) -- only the dropped 1-bit
+# arm needed a source-built mlx fork. uv-only: the mlx override below is uv
+# metadata that plain pip won't honour. The python_version guard keeps the
+# base project resolvable on 3.10 -- the extra contributes nothing there.
+bonsai = [
+    "mflux ; sys_platform == 'darwin' and python_version >= '3.11'",
+    "prism-image-studio ; sys_platform == 'darwin' and python_version >= '3.11'",
 ]
 
 [tool.uv]
 dev-dependencies = []
+# mflux-prism / prism-image-studio pin mlx to PrismML's source-built fork (1-bit
+# Metal kernels) whose JIT path doesn't compile on current macOS. Ternary only
+# needs stock 2-bit affine quant, so force the prebuilt pypi mlx instead. This
+# override beats their direct-url mlx requirement.
+override-dependencies = ["mlx ; sys_platform == 'darwin'"]
 
 [tool.uv.sources]
 diffusers = { git = "https://github.com/huggingface/diffusers.git" }
 sdnq = { git = "https://github.com/Disty0/sdnq.git" }
+# `mflux` resolves to PrismML's fork (carries the flux2 / bonsai model code that
+# prism-image-studio imports). Also wins over prism-image-studio's own pinned
+# mflux git rev, so the two don't fight over the `mflux` dist. Only consulted
+# when the `bonsai` extra is resolved.
+mflux = { git = "https://github.com/PrismML-Eng/mflux-prism.git" }
+prism-image-studio = { git = "https://github.com/PrismML-Eng/image-studio.git" }
