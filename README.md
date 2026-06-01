@@ -22,7 +22,7 @@ AI image generation and editing on Mac Silicon and CUDA. Generate images from te
 | FLUX.2-klein-4B (Int8) | ~16GB | Text-to-image + Image editing | Fast |
 | Z-Image Turbo (Quantized) | ~8GB | Text-to-image | Fastest |
 | Anima Turbo AIO Q4 (Metal) | ~3GB model + unified memory | Text-to-image, baked Turbo LoRA | ~16s internal @ 512x768 / 8 steps |
-| Bonsai Image 4B (Ternary MLX) | ~3.7GB, Apple Silicon only | Text-to-image, 4 steps | ~23s @ 512x512 / 4 steps |
+| Bonsai Image 4B (Ternary MLX) | ~3.7GB, Apple Silicon only | Text-to-image, 4 steps | ~15s @ 512x512 / 4 steps |
 | Z-Image Turbo (Full) | ~24GB | Text-to-image + LoRA | Slower |
 
 ## Quick Start (1-Click)
