@@ -777,7 +777,7 @@ with gr.Blocks(title="Ultra Fast Image Gen") as demo:
     - **FLUX.2-klein-4B (Int8):** 8GB, supports image-to-image editing (default)
     - **Z-Image Turbo (Quantized):** 3.5GB, fastest, no LoRA
     - **Anima Turbo AIO Q4 (Metal):** local patched sd.cpp runner, defaults to 512x768 / 8 steps
-    - **Bonsai Image 4B (MLX):** ternary, ~3.9GB, Apple Silicon only, 4 steps (optional: `uv sync --extra bonsai`)
+    - **Bonsai Image 4B (MLX):** ternary, ~3.7GB, Apple Silicon only, 4 steps (optional: `uv sync --extra bonsai`)
     - **Z-Image Turbo (Full):** 24GB, slower, LoRA support
     
     **Resolutions:** Up to 2048px for txt2img. Image-to-image: 1K (16GB) or 1.5K (32GB+).

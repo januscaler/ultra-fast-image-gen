@@ -22,7 +22,7 @@ AI image generation and editing on Mac Silicon and CUDA. Generate images from te
 | FLUX.2-klein-4B (Int8) | ~16GB | Text-to-image + Image editing | Fast |
 | Z-Image Turbo (Quantized) | ~8GB | Text-to-image | Fastest |
 | Anima Turbo AIO Q4 (Metal) | ~3GB model + unified memory | Text-to-image, baked Turbo LoRA | ~16s internal @ 512x768 / 8 steps |
-| Bonsai Image 4B (Ternary MLX) | ~3.9GB, Apple Silicon only | Text-to-image, 4 steps | Fast |
+| Bonsai Image 4B (Ternary MLX) | ~3.7GB, Apple Silicon only | Text-to-image, 4 steps | ~23s @ 512x512 / 4 steps |
 | Z-Image Turbo (Full) | ~24GB | Text-to-image + LoRA | Slower |
 
 ## Quick Start (1-Click)
@@ -78,7 +78,7 @@ uv sync --extra bonsai
 ```
 
 That pulls `prism-image-studio` + `mflux-prism` and stock `mlx` (prebuilt wheel —
-no Xcode/Metal build needed). Weights (~3.9 GB) auto-download from Hugging Face
+no Xcode/Metal build needed). Weights (~3.7 GB) auto-download from Hugging Face
 on first use.
 
 Note: only the ternary arm is supported. The 1-bit/binary arm needed a
@@ -179,7 +179,7 @@ Quotes around the prompt are optional — all words before the first `--flag` ar
 | `--cfg-scale` | 1.0 | Anima CFG scale |
 | `--anima-preset` | Balanced | `Fast` (3 steps), `Balanced` (8), or `Quality` (16) |
 
-**Bonsai options** (Apple Silicon only; `--device` and `--guidance` are ignored):
+**Bonsai options** (Apple Silicon only; `--device` is accepted but ignored — always MLX):
 
 | Option | Default | Description |
 |--------|---------|-------------|
