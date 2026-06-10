@@ -304,6 +304,81 @@ Recommended settings:
 | Anima Turbo AIO Q4 (Metal) | 32GB recommended for local setup |
 | Bonsai Image 4B (MLX) | ~4GB unified memory, Apple Silicon |
 
+## MCP Server (For AI Agents like opencode)
+
+This project includes a Model Context Protocol (MCP) server, allowing AI coding assistants (like opencode, Claude Desktop, or Cursor) to generate images directly into your project.
+
+### Setup
+
+1. Ensure dependencies are installed (includes the `mcp` package):
+   ```bash
+   uv pip install -r requirements.txt
+   # or: pip install -r requirements.txt
+   ```
+
+2. Test the MCP server locally:
+   ```bash
+   uv run python mcp_server.py
+   # or: python mcp_server.py
+   ```
+
+### OpenCode 1-Click Installation
+
+Run the provided installation script to **cleanly and surgically** inject both the MCP server configuration and the visual assets skill into your global OpenCode config (`~/.config/opencode/opencode.json`), without breaking existing settings or formatting:
+
+```bash
+python3 scripts/install-opencode-mcp.py
+```
+*Note: Ensure `HF_TOKEN` is set in your environment variables before running, or update it manually in the generated config.*
+
+### Manual OpenCode Configuration
+
+If you prefer manual setup, add to your `opencode.json` (project root or `~/.config/opencode/opencode.json`):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "ultra-fast-image-gen": {
+      "type": "local",
+      "command": ["python3", "/Users/shivanshtalwar/myprojects/ultra-fast-image-gen-mcp/mcp_server.py"],
+      "environment": {
+        "HF_TOKEN": "your_huggingface_token_here"
+      }
+    }
+  }
+}
+```
+*(Adjust the path to `mcp_server.py` and use `["uv", "run", "python", "..."]` if using `uv`.)*
+
+### Agent Instructions
+
+Add the following to your project's `.opencode/agents.md` or global `~/.config/opencode/AGENTS.md` to enable seamless image generation and editing:
+
+```markdown
+## Website Visual Assets Skill
+When asked to create or edit images (e.g., "add a headphone banner" or "make the logo background dark"), use the `generate_image` or `edit_image` MCP tools from the `ultra-fast-image-gen` server. Follow the skill's workflow for prompting, path resolution, and code injection.
+```
+
+### Claude Desktop Configuration
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS:
+
+```json
+{
+  "mcpServers": {
+    "ultra-fast-image-gen": {
+      "command": "uv",
+      "args": ["run", "python", "/Users/shivanshtalwar/myprojects/ultra-fast-image-gen-mcp/mcp_server.py"],
+      "env": {
+        "HF_TOKEN": "your_huggingface_token_here"
+      }
+    }
+  }
+}
+```
+*(Adjust the path to `mcp_server.py` and use `python` instead of `uv` if not using `uv`.)*
+
 ## Credits
 
 - [FLUX.2-klein-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) by Black Forest Labs
