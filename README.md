@@ -2,6 +2,8 @@
 
 AI image generation and editing on Mac Silicon and CUDA. Generate images from text or transform existing images with state-of-the-art diffusion models.
 
+![Ultra Fast Image Gen web UI](docs/screenshot.png)
+
 ## Features
 
 - **Image Generation:** Create images from text prompts
