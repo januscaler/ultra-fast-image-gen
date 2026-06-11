@@ -367,11 +367,8 @@ def run_bonsai(args):
     args.prompt = " ".join(args.prompt)
     seed = secrets.randbits(31) if args.seed is None else args.seed
 
-    # height/width default to None here because the shared `common` parser's
-    # defaults get clobbered to None by the anima sub-command's set_defaults
-    # (argparse parents share action objects). Apply Bonsai's own 512 default.
-    height = args.height if args.height is not None else 512
-    width = args.width if args.width is not None else 512
+    height = args.height
+    width = args.width
 
     pipe = load_bonsai_pipeline()
 
@@ -397,8 +394,14 @@ def run_bonsai(args):
 # ---------------------------------------------------------------------------
 
 
-def build_parser() -> argparse.ArgumentParser:
-    # Parent parser: arguments common to every sub-command
+def make_common() -> argparse.ArgumentParser:
+    """Parent parser: arguments common to every sub-command.
+
+    Returns a fresh parser per call: argparse `parents=[...]` shares the
+    parent's action OBJECTS with each child, so a sub-command calling
+    set_defaults() (anima does, for height/width) would otherwise mutate
+    action.default for every sub-command built from the same instance.
+    """
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("prompt", nargs="+", help="Text prompt for image generation (quoting optional)")
     common.add_argument(
@@ -419,7 +422,10 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["mps", "cuda", "cpu"],
         help="Compute device (default: mps)",
     )
+    return common
 
+
+def build_parser() -> argparse.ArgumentParser:
     speed_common = argparse.ArgumentParser(add_help=False)
     speed_common.add_argument("prompt", nargs="+", help="Text prompt for image generation (quoting optional)")
     speed_common.add_argument(
@@ -516,7 +522,7 @@ def build_parser() -> argparse.ArgumentParser:
     # zimage-quant
     p = sub.add_parser(
         "zimage-quant",
-        parents=[common],
+        parents=[make_common()],
         help="Z-Image Turbo quantized uint4 (~3.5 GB, fastest)",
     )
     p.add_argument("--steps", type=int, default=5, help="Inference steps (default: 5)")
@@ -524,7 +530,7 @@ def build_parser() -> argparse.ArgumentParser:
     # zimage-full
     p = sub.add_parser(
         "zimage-full",
-        parents=[common],
+        parents=[make_common()],
         help="Z-Image Turbo full precision (supports LoRA)",
     )
     p.add_argument("--steps", type=int, default=5, help="Inference steps (default: 5)")
@@ -536,28 +542,28 @@ def build_parser() -> argparse.ArgumentParser:
     # flux2-4b-int8
     sub.add_parser(
         "flux2-4b-int8",
-        parents=[common, flux_opts],
+        parents=[make_common(), flux_opts],
         help="FLUX.2-klein-4B int8 quantized (supports img2img)",
     )
 
     # flux2-4b-sdnq
     sub.add_parser(
         "flux2-4b-sdnq",
-        parents=[common, flux_opts],
+        parents=[make_common(), flux_opts],
         help="FLUX.2-klein-4B 4bit SDNQ (supports img2img)",
     )
 
     # flux2-9b-sdnq
     sub.add_parser(
         "flux2-9b-sdnq",
-        parents=[common, flux_opts],
+        parents=[make_common(), flux_opts],
         help="FLUX.2-klein-9B 4bit SDNQ (higher quality, supports img2img)",
     )
 
     # flux2-4b-uncensored (SDNQ backbone + abliterated Qwen3 GGUF text encoder)
     sub.add_parser(
         "flux2-4b-uncensored",
-        parents=[common, flux_opts],
+        parents=[make_common(), flux_opts],
         help="FLUX.2-klein-4B with uncensored Qwen3 text encoder (q4_k_m GGUF, img2img)",
     )
 
@@ -598,7 +604,7 @@ def build_parser() -> argparse.ArgumentParser:
     # anima (external Metal runner, baked Turbo LoRA)
     p = sub.add_parser(
         "anima",
-        parents=[common],
+        parents=[make_common()],
         help="Anima Turbo AIO Q4 (Metal runner, baked Turbo LoRA)",
     )
     p.add_argument(
@@ -619,7 +625,7 @@ def build_parser() -> argparse.ArgumentParser:
     # bonsai-ternary (MLX, Apple Silicon)
     p = sub.add_parser(
         "bonsai-ternary",
-        parents=[common],
+        parents=[make_common()],
         help="Bonsai Image 4B ternary (MLX, Apple Silicon)",
     )
     p.add_argument("--steps", type=int, default=4, help="Inference steps (default: 4)")
