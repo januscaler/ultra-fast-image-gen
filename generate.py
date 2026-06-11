@@ -12,6 +12,7 @@ Supports all models available through the Gradio web interface:
   flux2-4b-uncensored-mflux-hs  MFLUX/MLX q4 + uncensored GGUF TE + HS, fastest 2K path
   flux2-4b-uncensored-sdnq-hs   PyTorch SDNQ + uncensored GGUF TE + MPS/HS 2K path
   anima           Anima Turbo AIO Q4 (Metal runner, baked Turbo LoRA)
+  bonsai-ternary  Bonsai Image 4B ternary (MLX, Apple Silicon)
 
 Usage examples:
   python generate.py zimage-quant "a red fox in snow" --steps 5
@@ -21,6 +22,7 @@ Usage examples:
   python generate.py flux2-4b-uncensored-mflux-hs "a red fox" --width 2048 --height 2048
   python generate.py flux2-4b-uncensored-sdnq-hs "a red fox" --width 2048 --height 2048
   python generate.py anima "a red fox" --anima-preset Balanced
+  python generate.py bonsai-ternary "a red fox" --steps 4
 """
 
 import os
@@ -354,6 +356,42 @@ def run_anima(args):
     )
 
 
+def run_bonsai(args):
+    # Bonsai runs in-process through prism-image-studio's MLX FluxPipeline.
+    # Apple Silicon only; ignores --device (always MLX) and --guidance (the
+    # 4-step distilled model takes none).
+    import secrets
+
+    from bonsai_mflux import load_bonsai_pipeline, generate_bonsai
+
+    args.prompt = " ".join(args.prompt)
+    seed = secrets.randbits(31) if args.seed is None else args.seed
+
+    # height/width default to None here because the shared `common` parser's
+    # defaults get clobbered to None by the anima sub-command's set_defaults
+    # (argparse parents share action objects). Apply Bonsai's own 512 default.
+    height = args.height if args.height is not None else 512
+    width = args.width if args.width is not None else 512
+
+    pipe = load_bonsai_pipeline()
+
+    print(f"Generating with seed {seed}...")
+    image, meta = generate_bonsai(
+        pipe,
+        args.prompt,
+        height=height,
+        width=width,
+        steps=args.steps,
+        seed=seed,
+    )
+
+    image.save(args.output)
+    print(
+        f"Saved to {args.output} "
+        f"(seed: {meta['seed']}, {meta['width']}x{meta['height']}, steps: {meta['steps']})"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
@@ -578,6 +616,14 @@ def build_parser() -> argparse.ArgumentParser:
     # Anima uses its own height/width defaults (see run_anima), so unset -> None.
     p.set_defaults(height=None, width=None)
 
+    # bonsai-ternary (MLX, Apple Silicon)
+    p = sub.add_parser(
+        "bonsai-ternary",
+        parents=[common],
+        help="Bonsai Image 4B ternary (MLX, Apple Silicon)",
+    )
+    p.add_argument("--steps", type=int, default=4, help="Inference steps (default: 4)")
+
     return parser
 
 
@@ -626,6 +672,9 @@ def main():
 
     elif args.model == "anima":
         run_anima(args)
+
+    elif args.model == "bonsai-ternary":
+        run_bonsai(args)
 
 
 if __name__ == "__main__":

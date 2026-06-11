@@ -38,6 +38,15 @@ from anima_aio import (
     is_anima_model_choice,
 )
 
+from bonsai_mflux import (
+    BONSAI_MODEL_CHOICES,
+    bonsai_available,
+    bonsai_known_models,
+    generate_bonsai,
+    is_bonsai_model_choice,
+    load_bonsai_pipeline,
+)
+
 from loaders import (
     get_memory_usage,
     print_memory,
@@ -80,6 +89,9 @@ MODEL_CHOICES = [
     "FLUX.2-klein-4B Uncensored (q4_k_m TE)",
     "Z-Image Turbo (Quantized - Fast)",
     ANIMA_MODEL_CHOICE,
+    # Bonsai arms only listed when the optional extra is installed (selecting
+    # one otherwise would just error on generate).
+    *(BONSAI_MODEL_CHOICES if bonsai_available() else []),
     "Z-Image Turbo (Full - LoRA support)",
 ]
 
@@ -128,6 +140,8 @@ def load_pipeline(model_choice: str, device: str = "mps"):
         model_type = PYTORCH_SDNQ_HS_MODEL_TYPE
     elif "Uncensored" in model_choice:
         model_type = "flux2-klein-uncensored"
+    elif is_bonsai_model_choice(model_choice):
+        model_type = "bonsai"
     elif "Quantized" in model_choice:
         model_type = "zimage-quant"
     elif "Full" in model_choice:
@@ -170,7 +184,26 @@ def load_pipeline(model_choice: str, device: str = "mps"):
         current_lora_path = None
         print("Using external patched MFLUX/MLX HS runner.")
         return None
-    
+
+    if model_type == "bonsai":
+        if pipe is not None and current_model == model_type:
+            return pipe
+        if pipe is not None:
+            print(f"Switching from {current_model} to {model_type}...")
+            del pipe
+            pipe = None
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+        pipe = load_bonsai_pipeline()
+        current_device = "mlx"
+        current_model = model_type
+        current_lora_path = None
+        print(f"Pipeline loaded! (Model: {model_type})")
+        return pipe
+
+
     if pipe is not None and current_device == device and current_model == model_type:
         return pipe
     
@@ -366,6 +399,23 @@ def generate_image(
         )
         return result["image"], info
 
+    if current_model == "bonsai":
+        image, meta = generate_bonsai(
+            pipe,
+            prompt,
+            height=int(height),
+            width=int(width),
+            steps=int(steps),
+            seed=int(seed),
+        )
+        info = (
+            f"Seed: {meta['seed']} | Model: Bonsai Image 4B (ternary) | "
+            f"Device: MLX | {meta['width']}x{meta['height']} | Steps: {meta['steps']}"
+        )
+        if auto_save:
+            info += f" | {save_image(image, output_dir, prompt)}"
+        return image, info
+
     if current_model == "zimage-full" and lora_file:
         load_lora(lora_file, lora_strength, device)
 
@@ -545,6 +595,7 @@ KNOWN_MODELS = {
     "Tongyi-MAI/Z-Image-Turbo": "Z-Image Turbo (Full)",
     "Disty0/Z-Image-Turbo-SDNQ-uint4-svd-r32": "Z-Image Turbo (Quantized)",
     "filipstrand/Z-Image-Turbo-mflux-4bit": "Z-Image Turbo (mflux 4bit)",
+    **bonsai_known_models(),
 }
 
 
@@ -673,7 +724,9 @@ def delete_model(model_selection):
             needs_unload = True
         elif "z-image" in model_repo.lower() and current_model and "zimage" in current_model.lower():
             needs_unload = True
-        
+        elif "bonsai" in model_repo and current_model == "bonsai":
+            needs_unload = True
+
         if needs_unload:
             del pipe
             pipe = None
@@ -869,6 +922,7 @@ with gr.Blocks(title="Ultra Fast Image Gen") as demo:
     - **FLUX.2-klein-4B (Int8):** 8GB, supports image-to-image editing
     - **Z-Image Turbo (Quantized):** 3.5GB, fastest, no LoRA
     - **Anima Turbo AIO Q4 (Metal):** local patched sd.cpp runner, defaults to 512x768 / 8 steps
+    - **Bonsai Image 4B (MLX):** ternary, ~3.7GB, Apple Silicon only, 4 steps (optional: `uv sync --extra bonsai`)
     - **Z-Image Turbo (Full):** 24GB, slower, LoRA support
 
     **Resolutions:** the Uncensored 2K lanes generate full 2048x2048; other models up to 2048px txt2img. Image-to-image: 1K (16GB) or 1.5K (32GB+).

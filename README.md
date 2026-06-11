@@ -10,6 +10,7 @@ AI image generation and editing on Mac Silicon and CUDA. Generate images from te
 - **Quantized Models:** Low memory usage with 4bit/int8 quantization
 - **Anima Turbo AIO:** Local patched Metal runner with Turbo LoRA baked into the GGUF
 - **Uncensored FLUX.2 2K lanes:** MFLUX/MLX fast path and PyTorch SDNQ fallback with MPS optimizations
+- **Bonsai Image 4B:** Ternary FLUX.2 Klein, in-process MLX on Apple Silicon
 - **LoRA Support:** Load custom LoRA adapters with Z-Image Full model
 - **Cross-Platform:** Apple Silicon (MPS) and NVIDIA GPUs (CUDA)
 
@@ -24,6 +25,7 @@ AI image generation and editing on Mac Silicon and CUDA. Generate images from te
 | FLUX.2-klein-4B (Int8) | ~16GB | Text-to-image + Image editing | Fast |
 | Z-Image Turbo (Quantized) | ~8GB | Text-to-image | Fastest |
 | Anima Turbo AIO Q4 (Metal) | ~3GB model + unified memory | Text-to-image, baked Turbo LoRA | ~16s internal @ 512x768 / 8 steps |
+| Bonsai Image 4B (Ternary MLX) | ~3.7GB, Apple Silicon only | Text-to-image, 4 steps | ~15s @ 512x512 / 4 steps |
 | Z-Image Turbo (Full) | ~24GB | Text-to-image + LoRA | Slower |
 
 The uncensored variants do not re-download a separate base model: the SDNQ HS
@@ -45,6 +47,10 @@ backbone, so the only extra download is the uncensored Qwen3 text encoder
 5. The launcher installs the patched MFLUX runtime for the Uncensored 2K fast lane if needed
 6. The Anima GGUF auto-downloads on first Anima generation
 7. Browser opens automatically to the UI
+
+> Bonsai Image 4B is **not** part of this default install — it's an opt-in extra
+> (`uv sync --extra bonsai`, Apple Silicon + python 3.11+). See
+> [Bonsai Image 4B (optional)](#bonsai-image-4b-optional).
 
 ## Manual Installation
 
@@ -93,6 +99,25 @@ environment. Only the "FLUX.2-klein-4B Uncensored MFLUX HS" model needs this;
 the SDNQ HS 2K lane runs on the normal Python dependencies. Override the
 install location with `ULTRA_FAST_MFLUX_HS_DIR`.
 
+### Bonsai Image 4B (optional)
+
+Bonsai (ternary) is **not installed by default** — it's an opt-in extra. It runs
+in-process on MLX and is **Apple Silicon + python 3.11+ only**. Enable it with
+uv (the extra carries a `mlx` override that plain pip won't honour, so uv is
+required here):
+
+```bash
+uv sync --extra bonsai
+```
+
+That pulls `prism-image-studio` + `mflux-prism` and stock `mlx` (prebuilt wheel —
+no Xcode/Metal build needed). Weights (~3.7 GB) auto-download from Hugging Face
+on first use.
+
+Note: only the ternary arm is supported. The 1-bit/binary arm needed a
+source-built mlx fork whose Metal kernels don't compile on current macOS, so
+it's dropped — ternary uses standard 2-bit affine quant on stock mlx instead.
+
 ## Usage
 
 ### Web UI
@@ -112,6 +137,7 @@ Then open http://localhost:7860 in your browser.
 - **FLUX.2-klein-4B (Int8):** Alternative quantization, more memory
 - **Z-Image Turbo (Quantized):** Fastest text-to-image, no image editing
 - **Anima Turbo AIO Q4 (Metal):** Uses `~/anima-comfyui/run_anima_aio_metal.sh`; auto-downloads the Turbo AIO GGUF if missing and defaults to 512x768, 8 steps, CFG 1
+- **Bonsai Image 4B (Ternary MLX):** In-process MLX on Apple Silicon, 4-step distilled. Weights auto-download on first use (opt-in extra)
 - **Z-Image Turbo (Full):** Use when you need LoRA support
 
 ### Image Editing (FLUX.2-klein)
@@ -153,6 +179,9 @@ python generate.py flux2-4b-sdnq transform the fox into a wolf --input-images re
 
 # Anima Turbo AIO (Metal runner, baked Turbo LoRA)
 python generate.py anima anime portrait, detailed eyes --anima-preset Balanced
+
+# Bonsai Image 4B ternary (MLX, Apple Silicon) — needs the bonsai extra
+python generate.py bonsai-ternary a red fox in snow --steps 4
 ```
 
 Quotes around the prompt are optional — all words before the first `--flag` are joined into the prompt.
@@ -203,6 +232,12 @@ Quotes around the prompt are optional — all words before the first `--flag` ar
 | `--cfg-scale` | 1.0 | Anima CFG scale |
 | `--anima-preset` | Balanced | `Fast` (3 steps), `Balanced` (8), or `Quality` (16) |
 
+**Bonsai options** (Apple Silicon only; `--device` is accepted but ignored — always MLX):
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--steps` | 4 | Inference steps |
+
 ## Benchmarks
 
 ### FLUX.2-klein-4B
@@ -252,12 +287,14 @@ Recommended settings:
 | Z-Image (Quantized) | 8GB |
 | Z-Image (Full) | 24GB+ |
 | Anima Turbo AIO Q4 (Metal) | 32GB recommended for local setup |
+| Bonsai Image 4B (MLX) | ~4GB unified memory, Apple Silicon |
 
 ## Credits
 
 - [FLUX.2-klein-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) by Black Forest Labs
 - [Z-Image](https://github.com/Tongyi-MAI/Z-Image) by Alibaba
 - [Anima](https://huggingface.co/circlestone-labs/Anima) by Circlestone Labs
+- [Bonsai Image 4B](https://github.com/PrismML-Eng/image-studio) by PrismML (via prism-image-studio + mflux-prism, on [mflux](https://github.com/filipstrand/mflux) / [mlx](https://github.com/ml-explore/mlx))
 - [SDNQ Quantization](https://huggingface.co/Disty0/FLUX.2-klein-4B-SDNQ-4bit-dynamic) by Disty0
 - [Int8 Quantization](https://huggingface.co/aydin99/FLUX.2-klein-4B-int8) using optimum-quanto
 
