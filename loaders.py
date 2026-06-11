@@ -1,6 +1,6 @@
 """
-Model loader functions shared between app.py (Gradio UI) and generate.py (CLI).
-Keeping them here avoids importing Gradio and its side-effects in the CLI.
+Model loader functions shared between server.py (web UI) and generate.py (CLI).
+Keeping them here keeps the CLI free of web-server imports.
 """
 
 import os

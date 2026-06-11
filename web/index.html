@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ultra Fast Image Gen</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>&#9889;</text></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wordmark">Ultra&nbsp;Fast <span>Image Gen</span></div>
+  <div class="topbar-right">
+    <span id="device-chip" class="device tab-nums"></span>
+    <button id="storage-toggle" class="icon-link" type="button">Storage</button>
+  </div>
+</header>
+
+<!-- ======================= Stage ======================= -->
+<main id="stage" class="stage">
+
+  <div id="empty" class="empty">
+    <h1>Type something.<br>Get an image.</h1>
+    <p class="empty-sub">Runs entirely on this machine.</p>
+    <div class="samples" role="group" aria-label="Sample prompts">
+      <button type="button" class="sample">A lighthouse in a storm, oil painting</button>
+      <button type="button" class="sample">Tiny robot watering a bonsai, studio light</button>
+      <button type="button" class="sample">Foggy alpine lake at dawn, 35mm film</button>
+    </div>
+  </div>
+
+  <figure id="shot" class="shot" hidden>
+    <img id="shot-img" alt="Generated image">
+    <figcaption class="shot-meta">
+      <span id="shot-seed" class="tab-nums"></span>
+      <span class="shot-actions">
+        <button id="copy-seed" class="icon-link" type="button">Copy seed</button>
+        <button id="reuse-seed" class="icon-link" type="button" title="Lock this seed for the next run">Reuse seed</button>
+        <a id="download-link" class="icon-link" download>Download</a>
+      </span>
+    </figcaption>
+  </figure>
+
+  <div id="busy" class="busy" hidden>
+    <div class="busy-card">
+      <div class="spinner" aria-hidden="true"></div>
+      <div>
+        <div id="busy-stage" class="busy-stage">Generating</div>
+        <div id="busy-detail" class="busy-detail tab-nums"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- session gallery rail -->
+  <nav id="rail" class="rail" aria-label="Session gallery"></nav>
+</main>
+
+<!-- ======================= Command bar ======================= -->
+<section class="dock" aria-label="Generation controls">
+  <p id="error" class="error" role="alert" hidden></p>
+
+  <div class="bar">
+    <div class="progress" aria-hidden="true"><div id="progress-bar"></div></div>
+
+    <div class="chips" role="toolbar" aria-label="Settings">
+      <button id="chip-model" class="chip" type="button" aria-haspopup="true"></button>
+      <button id="chip-size" class="chip tab-nums" type="button" aria-haspopup="true"></button>
+      <button id="chip-tune" class="chip tab-nums" type="button" aria-haspopup="true"></button>
+      <button id="chip-batch" class="chip tab-nums" type="button" aria-haspopup="true"></button>
+      <button id="chip-more" class="chip" type="button" aria-haspopup="true" aria-label="More settings">&#8943;</button>
+    </div>
+
+    <div id="ref-tray" class="ref-tray" hidden></div>
+
+    <div class="prompt-row">
+      <button id="add-refs" class="add-refs" type="button" title="Add reference images (image editing)" aria-label="Add reference images" hidden>+</button>
+      <input id="file-input" type="file" accept="image/*" multiple hidden>
+      <textarea id="prompt" rows="1" placeholder="Describe an image…" spellcheck="false"></textarea>
+      <button id="generate" class="go" type="button" aria-label="Generate">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M3 1.8a.8.8 0 0 1 1.2-.7l9.6 6.2a.8.8 0 0 1 0 1.4L4.2 14.9a.8.8 0 0 1-1.2-.7V1.8z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- ---------- popovers ---------- -->
+  <div id="pop-model" class="pop" hidden>
+    <ul id="model-list" class="model-list"></ul>
+  </div>
+
+  <div id="pop-size" class="pop" hidden>
+    <div class="pop-title">Resolution</div>
+    <div id="presets" class="preset-grid">
+      <button type="button" class="preset" data-size="512">512</button>
+      <button type="button" class="preset" data-size="768">768</button>
+      <button type="button" class="preset" data-size="1024">1024</button>
+      <button type="button" class="preset" data-size="1536">1536</button>
+      <button type="button" class="preset" data-size="2048">2048</button>
+    </div>
+    <div class="dim-row">
+      <label class="dim">W <input id="width" type="number" min="64" max="2048" step="64"></label>
+      <button id="swap-dims" class="icon-link" type="button" aria-label="Swap width and height">&#8646;</button>
+      <label class="dim">H <input id="height" type="number" min="64" max="2048" step="64"></label>
+    </div>
+  </div>
+
+  <div id="pop-tune" class="pop" hidden>
+    <label class="row">
+      <span>Steps <output id="steps-out" class="tab-nums"></output></span>
+      <input id="steps" type="range" min="1" max="50">
+    </label>
+    <label class="row">
+      <span>Guidance <output id="guidance-out" class="tab-nums"></output></span>
+      <input id="guidance" type="range" min="0" max="10" step="0.5">
+    </label>
+    <label class="row">
+      <span>Seed</span>
+      <input id="seed" type="number" placeholder="random">
+    </label>
+  </div>
+
+  <div id="pop-batch" class="pop" hidden>
+    <label class="row">
+      <span>Images per run <output id="count-out" class="tab-nums"></output></span>
+      <input id="count" type="range" min="1" max="8" value="1">
+    </label>
+    <p class="pop-hint">Seeds increment from the base seed, so a batch is reproducible.</p>
+  </div>
+
+  <div id="pop-more" class="pop" hidden>
+    <div id="anima-block" hidden>
+      <div class="pop-title">Anima preset</div>
+      <div id="anima-presets" class="preset-grid"></div>
+    </div>
+    <div id="lora-block" hidden>
+      <div class="pop-title">LoRA</div>
+      <label class="row"><span>Path (.safetensors)</span>
+        <input id="lora-path" type="text" placeholder="~/loras/style.safetensors">
+      </label>
+      <label class="row">
+        <span>Strength <output id="lora-strength-out" class="tab-nums"></output></span>
+        <input id="lora-strength" type="range" min="0" max="2" step="0.05" value="1">
+      </label>
+    </div>
+    <div class="pop-title">Saving</div>
+    <label class="toggle-row"><input id="auto-save" type="checkbox"> Auto-save to disk</label>
+    <label class="row"><span>Output folder</span>
+      <span class="inline-input">
+        <input id="output-dir" type="text">
+        <button id="open-folder" class="icon-link" type="button">Open</button>
+      </span>
+    </label>
+  </div>
+</section>
+
+<!-- ======================= Storage drawer ======================= -->
+<aside id="storage-drawer" class="drawer" hidden aria-label="Storage management">
+  <div class="drawer-head">
+    <h2>Downloaded models</h2>
+    <button id="storage-close" class="icon-link" type="button" aria-label="Close storage panel">&#10005;</button>
+  </div>
+  <p id="storage-total" class="drawer-sub tab-nums"></p>
+  <ul id="storage-list" class="storage-list"></ul>
+  <p id="storage-msg" class="drawer-sub" role="status"></p>
+</aside>
+
+<script src="app.js"></script>
+</body>
+</html>

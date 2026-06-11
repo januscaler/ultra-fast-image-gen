@@ -1,7 +1,7 @@
 """
 Ultra-Fast Image Gen - Command Line Interface
 
-Supports all models available through the Gradio web interface:
+Supports all models available through the web interface:
 
   zimage-quant    Z-Image Turbo (quantized uint4, ~3.5 GB, fastest)
   zimage-full     Z-Image Turbo (full precision, LoRA support)

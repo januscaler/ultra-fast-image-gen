@@ -157,7 +157,7 @@ fi
 export ULTRA_FAST_MFLUX_HS_DIR="$MFLUX_HS_DIR"
 
 echo ""
-echo "Starting Gradio UI..."
+echo "Starting web UI..."
 echo "Opening browser to http://127.0.0.1:7860"
 echo ""
 echo "(Press Ctrl+C to stop the server)"
@@ -167,4 +167,4 @@ echo ""
 (sleep 6 && open http://127.0.0.1:7860) &
 
 # Run the app
-python app.py
+python server.py

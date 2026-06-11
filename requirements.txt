@@ -8,7 +8,8 @@ safetensors
 huggingface_hub[hf_xet]
 diffusers @ git+https://github.com/huggingface/diffusers
 sdnq @ git+https://github.com/Disty0/sdnq.git
-gradio>=6.0.0
+fastapi>=0.115.0
+uvicorn>=0.30.0
 pillow
 peft>=0.17.0
 scipy

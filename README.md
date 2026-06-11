@@ -123,10 +123,15 @@ it's dropped — ternary uses standard 2-bit affine quant on stock mlx instead.
 ### Web UI
 
 ```bash
-python app.py
+python server.py
 ```
 
 Then open http://localhost:7860 in your browser.
+
+The UI is a dependency-free HTML/CSS/JS frontend served by a small FastAPI
+backend. It shows real per-step progress, supports batch generation (up to 8
+images per run), resolution presets, drag-and-drop image editing, a session
+gallery, storage management, and remembers your settings between visits.
 
 ### Model Selection
 
