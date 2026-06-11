@@ -12,6 +12,11 @@ import time
 
 from PIL import Image
 
+# The gated text-encoder download inside the subprocess needs HF_TOKEN; load it
+# here so the CLI path gets .env credentials too (app.py loads dotenv itself).
+from dotenv import load_dotenv
+load_dotenv()
+
 DEFAULT_MFLUX_DIR = Path.home() / ".cache" / "ultra-fast-image-gen" / "mflux"
 LEGACY_MFLUX_DIR = Path("/tmp/mflux")
 SETUP_HINT = (

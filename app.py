@@ -89,18 +89,19 @@ MODEL_NOTES = {
         "**2K-ready** — settings auto-set to 2048x2048 / 4 steps / guidance 0. "
         "Fastest 2K lane: ≈100s per image, ≈7GB RAM. Needs the patched MFLUX runtime "
         "(one-time `scripts/setup_mflux_hs.sh`; Launch.command installs it automatically). "
-        "Uncensored text encoder (≈2.5GB GGUF) downloads on first use."
+        "Uncensored text encoder (≈2.5GB GGUF) downloads on first use — gated repo, so put a "
+        "Hugging Face token in `.env` (`HF_TOKEN=...`) and accept the terms on the model page."
     ),
     "FLUX.2-klein-4B Uncensored SDNQ HS (PyTorch 2K)": (
         "**2K-ready** — settings auto-set to 2048x2048 / 4 steps / guidance 0. "
         "Pure PyTorch, no extra setup: ≈110s per 2K image, low MPS memory. "
         "Shares the klein-4B (4bit SDNQ) base model — only the uncensored text encoder "
-        "(≈2.5GB GGUF) downloads extra."
+        "(≈2.5GB GGUF, gated repo: needs `HF_TOKEN` in `.env`) downloads extra."
     ),
     "FLUX.2-klein-4B Uncensored (q4_k_m TE)": (
         "Standard klein-4B pipeline with the uncensored text encoder, image editing included. "
         "Shares the klein-4B (4bit SDNQ) base model — only the uncensored text encoder "
-        "(≈2.5GB GGUF) downloads extra."
+        "(≈2.5GB GGUF, gated repo: needs `HF_TOKEN` in `.env`) downloads extra."
     ),
 }
 
@@ -319,6 +320,15 @@ def generate_image(
             )
         except FileNotFoundError as e:
             return None, str(e)
+        except (RuntimeError, TimeoutError) as e:
+            msg = str(e)
+            if "gated" in msg.lower() or "401" in msg:
+                return None, (
+                    "The uncensored text encoder repo is gated on Hugging Face. "
+                    "Accept the terms at huggingface.co/ponpoke/flux2-klein-4b-uncensored-text-encoder "
+                    "(instant auto-approval) and put a token in .env as HF_TOKEN=..., then retry."
+                )
+            return None, f"MFLUX generation failed: ...{msg[-600:]}"
         info = (
             f"Seed: {result.seed} | Model: FLUX.2-klein-4B Uncensored MFLUX HS | "
             f"Mode: txt2img | Device: MLX/MPS | Wall: {result.elapsed_s:.1f}s"

@@ -31,6 +31,11 @@ lane and the plain uncensored model reuse the FLUX.2-klein-4B (4bit SDNQ)
 backbone, so the only extra download is the uncensored Qwen3 text encoder
 (~2.5GB GGUF at the default `q4_k_m` quant).
 
+> **Note:** the [uncensored text encoder repo](https://huggingface.co/ponpoke/flux2-klein-4b-uncensored-text-encoder)
+> is gated on Hugging Face (instant auto-approval). Accept the terms on the
+> model page once, then put a token in a `.env` file at the repo root:
+> `HF_TOKEN=hf_...`
+
 ## Quick Start (1-Click)
 
 1. Download/clone the repo
@@ -51,6 +56,9 @@ python3.11 -m venv venv
 source venv/bin/activate
 
 pip install -r requirements.txt
+
+# For the uncensored models (gated text-encoder repo):
+echo "HF_TOKEN=hf_your_token_here" > .env
 ```
 
 ### Anima Fresh Install
