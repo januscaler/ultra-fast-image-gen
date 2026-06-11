@@ -408,7 +408,7 @@ button { font: inherit; }
 input[type="range"] { width: 100%; accent-color: var(--accent); margin: 2px 0; }
 input[type="checkbox"] { accent-color: var(--accent); }
 
-input[type="text"], input[type="number"] {
+input[type="text"], input[type="number"], input[type="password"] {
   background: var(--surface-2);
   border: 1px solid var(--line);
   color: var(--text);

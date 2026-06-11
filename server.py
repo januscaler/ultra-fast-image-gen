@@ -54,7 +54,21 @@ def status():
         "devices": engine.get_devices(),
         "current_model": engine.current_model(),
         "default_output_dir": engine.DEFAULT_OUTPUT_DIR,
+        "hf_token_set": engine.hf_token_set(),
     }
+
+
+class TokenRequest(BaseModel):
+    token: str
+
+
+@app.post("/api/settings/hf_token")
+def set_hf_token(req: TokenRequest):
+    try:
+        user = engine.set_hf_token(req.token)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"saved": True, "user": user}
 
 
 @app.get("/api/models")

@@ -35,18 +35,19 @@ backbone, so the only extra download is the uncensored Qwen3 text encoder
 
 > **Note:** the [uncensored text encoder repo](https://huggingface.co/ponpoke/flux2-klein-4b-uncensored-text-encoder)
 > is gated on Hugging Face (instant auto-approval). Accept the terms on the
-> model page once, then put a token in a `.env` file at the repo root:
-> `HF_TOKEN=hf_...`
+> model page once, then paste a token in the app's **⋯ menu** (it's validated
+> and stored in `.env` for you — or create `.env` yourself with `HF_TOKEN=hf_...`).
 
 ## Quick Start (1-Click)
 
 1. Download/clone the repo
 2. **Double-click `Launch.command`**
+   (if macOS says it's from an unidentified developer, right-click the file → Open → Open)
 3. First run will auto-install dependencies (~5 min); later runs reinstall if `requirements.txt` changed
-4. The launcher installs/builds the patched Anima Metal runner if needed
-5. The launcher installs the patched MFLUX runtime for the Uncensored 2K fast lane if needed
-6. The Anima GGUF auto-downloads on first Anima generation
-7. Browser opens automatically to the UI
+4. The launcher installs/builds the patched Anima Metal runner and the MFLUX 2K runtime if needed — if either fails, the app still starts and the rest of the models work
+5. Browser opens automatically to the UI
+6. Models download from inside the app: each one in the model picker has a Download button with live progress (or they fetch automatically on first generate)
+7. For the Uncensored models, paste your Hugging Face token in the **⋯ menu** (gated text encoder — accept the terms on the model page once)
 
 > Bonsai Image 4B is **not** part of this default install — it's an opt-in extra
 > (`uv sync --extra bonsai`, Apple Silicon + python 3.11+). See

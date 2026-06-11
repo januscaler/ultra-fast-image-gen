@@ -113,21 +113,16 @@ export ULTRA_FAST_ANIMA_MODEL="$ANIMA_MODEL"
 export ULTRA_FAST_ANIMA_ROOT="$ANIMA_ROOT"
 export PYTHON_CMD="$(pwd)/venv/bin/python"
 
+# Anima is optional: if its Metal build fails (Xcode tools, cmake, etc.) the
+# rest of the app still works, so warn and continue instead of blocking.
 if [ ! -x "$ANIMA_RUNNER" ] || [ ! -x "$ANIMA_SDCLI" ]; then
     echo "Anima runner is not installed yet. Installing the patched Metal runner now..."
-    if ! bash "$(pwd)/scripts/setup_anima_metal_runner.sh"; then
-        echo ""
-        echo "Anima setup could not complete."
-        echo "Fix the message above, then run Launch.command again."
-        read -p "Press Enter to exit..."
-        exit 1
-    fi
+    bash "$(pwd)/scripts/setup_anima_metal_runner.sh" || true
 fi
 
 if [ ! -x "$ANIMA_RUNNER" ] || [ ! -x "$ANIMA_SDCLI" ]; then
-    echo "Anima setup did not finish cleanly."
-    read -p "Press Enter to exit..."
-    exit 1
+    echo "Anima setup did not finish — the Anima model will be unavailable."
+    echo "Everything else still works. Run Launch.command again to retry Anima setup."
 elif [ -f "$ANIMA_MODEL" ]; then
     echo "Anima runner ready: $ANIMA_RUNNER"
     echo "Anima model ready: $ANIMA_MODEL"

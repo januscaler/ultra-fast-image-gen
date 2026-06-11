@@ -65,9 +65,51 @@ JOB_ROOT = os.path.join(tempfile.gettempdir(), "ufig_jobs")
 
 GATED_TE_NOTE = (
     "Uncensored text encoder (~2.5GB GGUF) downloads on first use — the repo is "
-    "gated on Hugging Face (instant auto-approval), so accept the terms on the "
-    "model page and put HF_TOKEN=... in .env."
+    "gated on Hugging Face (instant auto-approval): accept the terms on the model "
+    "page and add your token under the ⋯ menu."
 )
+
+
+def hf_token_set():
+    return bool(HF_TOKEN)
+
+
+def set_hf_token(token):
+    """Validate, persist to .env, and apply a Hugging Face token at runtime."""
+    global HF_TOKEN
+    token = (token or "").strip()
+    if not token:
+        raise ValueError("Paste a token first.")
+
+    user = None
+    try:
+        from huggingface_hub import HfApi
+
+        user = HfApi(token=token).whoami().get("name")
+    except Exception as exc:
+        msg = str(exc)
+        if "401" in msg or "Invalid" in msg:
+            raise ValueError("Hugging Face rejected this token — check it and try again.")
+        # Offline or transient API trouble: save anyway, it will be used as-is.
+
+    HF_TOKEN = token
+    os.environ["HF_TOKEN"] = token
+    import loaders
+
+    loaders.HF_TOKEN = token
+
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    lines = []
+    if os.path.exists(env_path):
+        with open(env_path) as f:
+            lines = [
+                line for line in f.read().splitlines()
+                if not line.startswith(("HF_TOKEN=", "HUGGING_FACE_HUB_TOKEN="))
+            ]
+    lines.append(f"HF_TOKEN={token}")
+    with open(env_path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    return user
 
 # ---------------------------------------------------------------------------
 # Model registry
@@ -822,7 +864,7 @@ def _friendly_error(exc):
         return (
             "The uncensored text encoder repo is gated on Hugging Face. Accept the "
             "terms at huggingface.co/ponpoke/flux2-klein-4b-uncensored-text-encoder "
-            "(instant auto-approval), put HF_TOKEN=... in .env, and retry."
+            "(instant auto-approval), add your token under the ⋯ menu, and retry."
         )
     if isinstance(exc, FileNotFoundError):
         return msg

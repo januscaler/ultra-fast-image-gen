@@ -20,6 +20,7 @@ const els = {
   loraBlock: $("lora-block"), loraPath: $("lora-path"),
   loraStrength: $("lora-strength"), loraStrengthOut: $("lora-strength-out"),
   autoSave: $("auto-save"), outputDir: $("output-dir"), openFolder: $("open-folder"),
+  hfToken: $("hf-token"), saveToken: $("save-token"), tokenStatus: $("token-status"),
   addRefs: $("add-refs"), fileInput: $("file-input"), refTray: $("ref-tray"),
   prompt: $("prompt"), generate: $("generate"),
   deviceChip: $("device-chip"), storageToggle: $("storage-toggle"), storageDrawer: $("storage-drawer"),
@@ -665,6 +666,29 @@ async function init() {
       body: JSON.stringify({ dir: els.outputDir.value || null }),
     }).catch((e) => showError(e.message))
   );
+
+  // Hugging Face token
+  els.tokenStatus.textContent = status.hf_token_set
+    ? "A token is saved (stored in .env)."
+    : "No token set yet.";
+  els.saveToken.addEventListener("click", async () => {
+    els.saveToken.disabled = true;
+    els.tokenStatus.textContent = "Checking token…";
+    try {
+      const r = await api("/api/settings/hf_token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: els.hfToken.value }),
+      });
+      els.hfToken.value = "";
+      els.tokenStatus.textContent = r.user
+        ? `Saved — signed in as ${r.user}.`
+        : "Saved (stored in .env).";
+    } catch (e) {
+      els.tokenStatus.textContent = e.message;
+    }
+    els.saveToken.disabled = false;
+  });
 
   els.storageToggle.addEventListener("click", () => {
     els.storageDrawer.hidden = !els.storageDrawer.hidden;

@@ -150,6 +150,14 @@
         <button id="open-folder" class="icon-link" type="button">Open</button>
       </span>
     </label>
+
+    <div class="pop-title">Hugging Face token</div>
+    <p class="pop-hint">Needed for the Uncensored models (gated text encoder). Create a read token at huggingface.co/settings/tokens, accept the terms on the model page, and paste it here.</p>
+    <span class="inline-input">
+      <input id="hf-token" type="password" placeholder="hf_…" autocomplete="off">
+      <button id="save-token" class="icon-link" type="button">Save</button>
+    </span>
+    <p id="token-status" class="pop-hint" role="status"></p>
   </div>
 </section>
 
