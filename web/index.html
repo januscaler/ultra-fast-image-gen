@@ -152,7 +152,10 @@
     </label>
 
     <div class="pop-title">Hugging Face token</div>
-    <p class="pop-hint">Needed for the Uncensored models (gated text encoder). Create a read token at huggingface.co/settings/tokens, accept the terms on the model page, and paste it here.</p>
+    <p class="pop-hint">Needed for the Uncensored models (gated text encoder).
+      <a href="https://huggingface.co/settings/tokens/new?tokenType=read" target="_blank" rel="noopener">Create a read token</a>
+      and <a href="https://huggingface.co/ponpoke/flux2-klein-4b-uncensored-text-encoder" target="_blank" rel="noopener">accept the model terms</a>,
+      then paste the token here.</p>
     <span class="inline-input">
       <input id="hf-token" type="password" placeholder="hf_…" autocomplete="off">
       <button id="save-token" class="icon-link" type="button">Save</button>

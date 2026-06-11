@@ -399,6 +399,9 @@ button { font: inherit; }
 
 .pop-hint { margin: 0; font-size: 12px; color: var(--dim); text-wrap: pretty; }
 
+.pop-hint a { color: var(--accent); text-decoration: none; }
+.pop-hint a:hover { text-decoration: underline; }
+
 .row { display: flex; flex-direction: column; gap: 5px; font-size: 13px; color: var(--dim); }
 .row span { display: flex; justify-content: space-between; }
 .row output { color: var(--text); }
