@@ -36,7 +36,17 @@ def main():
     
     hf_token = os.environ.get("HF_TOKEN", "").strip()
     if not hf_token:
-        print("\n🔑 Hugging Face API Token (HF_TOKEN) is required for model downloads.")
+        # The web UI saves the token to the repo .env (⋯ menu) — reuse it.
+        env_file = repo_root / ".env"
+        if env_file.exists():
+            for line in env_file.read_text().splitlines():
+                if line.startswith("HF_TOKEN="):
+                    hf_token = line.split("=", 1)[1].strip()
+                    break
+        if hf_token:
+            print("🔑 Using HF_TOKEN from the repo .env file.")
+    if not hf_token:
+        print("\n🔑 Hugging Face API Token (HF_TOKEN) is required for the gated models.")
         hf_token = getpass.getpass("Enter your HF_TOKEN (input will be hidden): ").strip()
         if not hf_token:
             print("⚠️  Warning: No token provided. You will need to add it manually to the config later.")

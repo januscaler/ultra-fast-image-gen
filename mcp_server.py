@@ -5,32 +5,23 @@ Exposes image generation capabilities to MCP clients (e.g., opencode, Claude Des
 Allows AI agents to generate images and save them directly to project directories.
 """
 
+import importlib.util
 import os
-import sys
 import subprocess
-from pathlib import Path
+import sys
+
 
 def _check_dependencies():
-    """Ensure required Python packages are installed before starting."""
-    required = ["sdnq", "diffusers", "transformers", "accelerate", "pillow"]
-    missing = []
-    for pkg in required:
-        try:
-            __import__(pkg.replace("-", "_"))
-        except ImportError:
-            missing.append(pkg)
-    
+    """Fail fast with install instructions instead of mutating the environment."""
+    required = ["mcp", "sdnq", "diffusers", "transformers", "accelerate", "PIL"]
+    missing = [pkg for pkg in required if importlib.util.find_spec(pkg) is None]
     if missing:
-        print(f"⚠️  Missing dependencies: {', '.join(missing)}", file=sys.stderr)
-        print("🔧 Auto-installing requirements...", file=sys.stderr)
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        req_file = os.path.join(script_dir, "requirements.txt")
-        if os.path.exists(req_file):
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", req_file])
-            print("✅ Dependencies installed successfully.", file=sys.stderr)
-        else:
-            print(f"❌ requirements.txt not found at {req_file}", file=sys.stderr)
-            sys.exit(1)
+        print(f"Missing dependencies: {', '.join(missing)}", file=sys.stderr)
+        print("Install them into this Python environment first:", file=sys.stderr)
+        print(f"  {sys.executable} -m pip install -r {os.path.join(script_dir, 'requirements.txt')} mcp", file=sys.stderr)
+        sys.exit(1)
+
 
 _check_dependencies()
 
