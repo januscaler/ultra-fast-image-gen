@@ -20,7 +20,12 @@ from loaders import (
 QUANT = sys.argv[1]
 STEPS = int(sys.argv[2]) if len(sys.argv) > 2 else 28
 SEED = int(sys.argv[3]) if len(sys.argv) > 3 else 1234
-PROMPT = "a photograph of a mountain landscape at sunset, highly detailed"
+_sz = sys.argv[4] if len(sys.argv) > 4 else "512"
+if "x" in _sz.lower():
+    WIDTH, HEIGHT = (int(v) for v in _sz.lower().split("x"))
+else:
+    WIDTH = HEIGHT = int(_sz)
+PROMPT = os.environ.get("PROMPT", "a photograph of a mountain landscape at sunset, highly detailed")
 
 
 def rss_gb():
@@ -68,15 +73,15 @@ t0 = time.time()
 with torch.inference_mode():
     img = pipe(
         prompt=PROMPT,
-        height=512,
-        width=512,
+        height=HEIGHT,
+        width=WIDTH,
         num_inference_steps=STEPS,
         guidance_scale=3.5,
         generator=gen,
     ).images[0]
 gen_s = time.time() - t0
 
-out = f"/tmp/uncensored_{QUANT}.png"
+out = f"/tmp/uncensored_{QUANT}_{WIDTH}x{HEIGHT}.png"
 img.save(out)
 
 metrics = {

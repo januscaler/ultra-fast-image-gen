@@ -9,6 +9,8 @@ Supports all models available through the Gradio web interface:
   flux2-4b-sdnq   FLUX.2-klein-4B (4bit SDNQ, img2img)
   flux2-9b-sdnq   FLUX.2-klein-9B (4bit SDNQ, higher quality, img2img)
   flux2-4b-uncensored  FLUX.2-klein-4B + uncensored Qwen3 GGUF text encoder
+  flux2-4b-uncensored-mflux-hs  MFLUX/MLX q4 + uncensored GGUF TE + HS, fastest 2K path
+  flux2-4b-uncensored-sdnq-hs   PyTorch SDNQ + uncensored GGUF TE + MPS/HS 2K path
   anima           Anima Turbo AIO Q4 (Metal runner, baked Turbo LoRA)
 
 Usage examples:
@@ -16,6 +18,8 @@ Usage examples:
   python generate.py zimage-full "a red fox" --lora my.safetensors --lora-strength 0.8
   python generate.py flux2-4b-sdnq "a red fox" --guidance 3.5 --steps 28
   python generate.py flux2-4b-int8 "edit the fox" --input-images ref.png --guidance 3.5
+  python generate.py flux2-4b-uncensored-mflux-hs "a red fox" --width 2048 --height 2048
+  python generate.py flux2-4b-uncensored-sdnq-hs "a red fox" --width 2048 --height 2048
   python generate.py anima "a red fox" --anima-preset Balanced
 """
 
@@ -76,6 +80,17 @@ def make_generator(seed, device: str):
     return gen, seed
 
 
+def fit_image_to_canvas(image, width: int, height: int):
+    from PIL import Image
+
+    image.thumbnail((width, height), Image.LANCZOS)
+    canvas = Image.new("RGB", (width, height), (0, 0, 0))
+    left = (width - image.width) // 2
+    top = (height - image.height) // 2
+    canvas.paste(image, (left, top))
+    return canvas
+
+
 def load_input_images(paths, width: int, height: int):
     from PIL import Image
 
@@ -84,7 +99,7 @@ def load_input_images(paths, width: int, height: int):
         if not os.path.exists(path):
             print(f"Warning: image not found, skipping: {path}")
             continue
-        img = Image.open(path).convert("RGB").resize((width, height), Image.LANCZOS)
+        img = fit_image_to_canvas(Image.open(path).convert("RGB"), width, height)
         images.append(img)
     return images
 
@@ -202,6 +217,112 @@ def run_flux2_klein(args, loader_fn):
     print(f"Saved to {args.output} (seed: {seed}, mode: {mode})")
 
 
+def run_flux2_klein_uncensored_sdnq_hs(args):
+    from flux2_sdnq_hs import (
+        Flux2SdnqHsConfig,
+        install_flux2_sdnq_hs_optimizations,
+        reset_flux2_sdnq_hs_state,
+    )
+    from loaders import load_flux2_klein_uncensored_pipeline
+
+    args.prompt = " ".join(args.prompt)
+    device = resolve_device(args.device)
+    if device != "mps":
+        print("Warning: the optimized SDNQ HS path is tuned for MPS; continuing anyway.")
+
+    pipe = load_flux2_klein_uncensored_pipeline(device, quant=args.gguf_quant)
+    cfg = Flux2SdnqHsConfig.for_steps(
+        args.steps,
+        qchunk=args.qchunk,
+        hs_stride=args.hs_stride,
+        hs_skip_transformer_forwards=args.hs_skip_transformer_forwards,
+        hs_max_transformer_forward=args.hs_max_transformer_forward,
+        hs_single_start_frac=args.hs_single_start_frac,
+        hs_single_end_frac=args.hs_single_end_frac,
+        verbose=args.hs_verbose,
+    )
+    patch_cfg = install_flux2_sdnq_hs_optimizations(pipe, cfg)
+    reset_flux2_sdnq_hs_state(pipe)
+    generator, seed = make_generator(args.seed, device)
+    input_images = []
+    if args.input_images:
+        input_images = load_input_images(args.input_images[:2], args.width, args.height)
+
+    print(f"Generating with PyTorch SDNQ HS (seed {seed}, patch={patch_cfg})...")
+    with torch.inference_mode():
+        if input_images:
+            image = pipe(
+                prompt=args.prompt,
+                image=input_images[0] if len(input_images) == 1 else input_images,
+                height=args.height,
+                width=args.width,
+                num_inference_steps=args.steps,
+                guidance_scale=args.guidance,
+                generator=generator,
+            ).images[0]
+        else:
+            image = pipe(
+                prompt=args.prompt,
+                height=args.height,
+                width=args.width,
+                num_inference_steps=args.steps,
+                guidance_scale=args.guidance,
+                generator=generator,
+            ).images[0]
+
+    image.save(args.output)
+    mode = f"img2img ({len(input_images)} ref)" if input_images else "txt2img"
+    print(f"Saved to {args.output} (seed: {seed}, mode: {mode}, backend: pytorch-sdnq-hs)")
+
+
+def run_flux2_klein_uncensored_mflux_hs(args):
+    from mflux_hs_uncensored import generate_mflux_hs_uncensored
+
+    prompt = " ".join(args.prompt)
+    if args.width > 2048 or args.height > 2048:
+        print("Warning: MFLUX HS preset is validated up to 2048px longest side.")
+    seed = args.seed if args.seed is not None else torch.randint(0, 2**32, (1,)).item()
+
+    print(f"Generating with MFLUX/MLX HS (seed {seed})...")
+    mflux_model = getattr(args, "mflux_model", None)
+    gguf_variant = getattr(args, "gguf_variant", None)
+    if args.model == "flux2-9b-uncensored-mflux-hs":
+        mflux_model = mflux_model or "flux2-klein-9b"
+        gguf_variant = gguf_variant or "9b"
+    else:
+        mflux_model = mflux_model or "flux2-klein-4b"
+        gguf_variant = gguf_variant or "4b"
+    result = generate_mflux_hs_uncensored(
+        prompt,
+        height=args.height,
+        width=args.width,
+        steps=args.steps,
+        seed=seed,
+        output_path=args.output,
+        timeout=args.timeout,
+        mflux_dir=args.mflux_dir,
+        mflux_model=mflux_model,
+        gguf_variant=gguf_variant,
+        gguf_quant=args.gguf_quant,
+        gguf_device=args.gguf_device,
+        gguf_repo=getattr(args, "gguf_repo", None),
+        gguf_subdir=getattr(args, "gguf_subdir", None),
+        gguf_filename=getattr(args, "gguf_filename", None),
+        hs_stride=args.hs_stride,
+        hs_max_transformer_forward=args.hs_max_transformer_forward,
+        hs_skip_transformer_forwards=args.hs_skip_transformer_forwards,
+        hs_single_start_frac=args.hs_single_start_frac,
+        hs_single_end_frac=args.hs_single_end_frac,
+        hs_verbose=args.hs_verbose,
+        input_image_paths=args.input_images[:2] if args.input_images else None,
+    )
+    print(result.log, end="")
+    print(
+        f"Saved to {result.path} "
+        f"(seed: {result.seed}, wall: {result.elapsed_s:.1f}s, backend: mflux-hs)"
+    )
+
+
 def run_anima(args):
     # Anima runs through an external Metal runner (no torch / diffusers).
     from anima_aio import ANIMA_DEFAULTS, generate_anima_aio, get_anima_preset
@@ -261,6 +382,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Compute device (default: mps)",
     )
 
+    speed_common = argparse.ArgumentParser(add_help=False)
+    speed_common.add_argument("prompt", nargs="+", help="Text prompt for image generation (quoting optional)")
+    speed_common.add_argument(
+        "--height", type=int, default=2048, help="Image height in pixels (default: 2048)"
+    )
+    speed_common.add_argument(
+        "--width", type=int, default=2048, help="Image width in pixels (default: 2048)"
+    )
+    speed_common.add_argument(
+        "--seed", type=int, default=None, help="Random seed (random if omitted)"
+    )
+    speed_common.add_argument(
+        "--output", default="output.png", help="Output file path (default: output.png)"
+    )
+    speed_common.add_argument(
+        "--device",
+        default="mps",
+        choices=["mps", "cuda", "cpu"],
+        help="Compute device (default: mps)",
+    )
+
     # Parent parser: extra arguments shared by FLUX.2-klein sub-commands
     flux_opts = argparse.ArgumentParser(add_help=False)
     flux_opts.add_argument(
@@ -281,6 +423,49 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         default=None,
         help="Input images for image-to-image editing (up to 6 paths)",
+    )
+
+    flux_fast_opts = argparse.ArgumentParser(add_help=False)
+    flux_fast_opts.add_argument(
+        "--steps",
+        type=int,
+        default=4,
+        help="Number of inference steps (default: 4)",
+    )
+    flux_fast_opts.add_argument(
+        "--guidance",
+        type=float,
+        default=0.0,
+        help="Guidance scale (default: 0.0 for distilled klein)",
+    )
+    flux_fast_opts.add_argument("--gguf-quant", default="q4_k_m", choices=["q4_k_m", "q6_k", "q8_0"])
+    flux_fast_opts.add_argument("--gguf-variant", default=None, choices=["4b", "9b"])
+    flux_fast_opts.add_argument("--gguf-repo", default=None)
+    flux_fast_opts.add_argument("--gguf-subdir", default=None)
+    flux_fast_opts.add_argument("--gguf-filename", default=None)
+    flux_fast_opts.add_argument("--qchunk", type=int, default=1024, help="MPS attention query chunk")
+    flux_fast_opts.add_argument("--hs-stride", type=int, default=2, help="Hidden-state compression stride")
+    flux_fast_opts.add_argument(
+        "--hs-skip-transformer-forwards",
+        type=int,
+        default=0,
+        help="Denoising transformer forwards to leave exact before compressing",
+    )
+    flux_fast_opts.add_argument(
+        "--hs-max-transformer-forward",
+        type=int,
+        default=None,
+        help="Exclusive denoising forward bound for HS compression (default: steps - 1)",
+    )
+    flux_fast_opts.add_argument("--hs-single-start-frac", type=float, default=0.0)
+    flux_fast_opts.add_argument("--hs-single-end-frac", type=float, default=1.0)
+    flux_fast_opts.add_argument("--hs-verbose", action="store_true")
+    flux_fast_opts.add_argument(
+        "--input-images",
+        nargs="+",
+        metavar="PATH",
+        default=None,
+        help="Input images for image-to-image editing (up to 2 paths in optimized app mode)",
     )
 
     parser = argparse.ArgumentParser(
@@ -337,6 +522,40 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[common, flux_opts],
         help="FLUX.2-klein-4B with uncensored Qwen3 text encoder (q4_k_m GGUF, img2img)",
     )
+
+    p = sub.add_parser(
+        "flux2-4b-uncensored-sdnq-hs",
+        parents=[speed_common, flux_fast_opts],
+        help="PyTorch SDNQ uncensored backend with exact MPS chunked attention + HS speed path",
+    )
+
+    p = sub.add_parser(
+        "flux2-4b-uncensored-mflux-hs",
+        parents=[speed_common, flux_fast_opts],
+        help="MFLUX/MLX q4 backend with uncensored GGUF TE + HS speed path (validated to 2K)",
+    )
+    p.add_argument(
+        "--mflux-dir",
+        default=None,
+        help="Patched MFLUX checkout (default: ~/.cache/ultra-fast-image-gen/mflux; see scripts/setup_mflux_hs.sh)",
+    )
+    p.add_argument("--timeout", type=int, default=180)
+    p.add_argument("--gguf-device", default="mps")
+    p.add_argument("--mflux-model", default="flux2-klein-4b")
+
+    p = sub.add_parser(
+        "flux2-9b-uncensored-mflux-hs",
+        parents=[speed_common, flux_fast_opts],
+        help="MFLUX/MLX q4 9B backend with 9B uncensored GGUF TE + HS speed path",
+    )
+    p.add_argument(
+        "--mflux-dir",
+        default=None,
+        help="Patched MFLUX checkout (default: ~/.cache/ultra-fast-image-gen/mflux; see scripts/setup_mflux_hs.sh)",
+    )
+    p.add_argument("--timeout", type=int, default=240)
+    p.add_argument("--gguf-device", default="mps")
+    p.add_argument("--mflux-model", default="flux2-klein-9b")
 
     # anima (external Metal runner, baked Turbo LoRA)
     p = sub.add_parser(
@@ -398,6 +617,12 @@ def main():
         run_flux2_klein(
             args, lambda device: load_flux2_klein_uncensored_pipeline(device, quant="q4_k_m")
         )
+
+    elif args.model == "flux2-4b-uncensored-sdnq-hs":
+        run_flux2_klein_uncensored_sdnq_hs(args)
+
+    elif args.model in ("flux2-4b-uncensored-mflux-hs", "flux2-9b-uncensored-mflux-hs"):
+        run_flux2_klein_uncensored_mflux_hs(args)
 
     elif args.model == "anima":
         run_anima(args)

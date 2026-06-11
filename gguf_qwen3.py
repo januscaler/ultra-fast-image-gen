@@ -12,6 +12,7 @@ from transformers itself.
 
 import os
 import sys
+import inspect
 
 import numpy as np
 import torch
@@ -22,6 +23,10 @@ import gguf
 from accelerate import init_empty_weights
 from transformers import AutoConfig, Qwen3ForCausalLM
 from transformers.modeling_gguf_pytorch_utils import get_gguf_hf_weights_map
+try:
+    from transformers.modeling_gguf_pytorch_utils import TensorProcessor
+except ImportError:
+    TensorProcessor = None
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "vendor"))
 from gguf_dequant import dequantize, dequantize_functions  # noqa: E402
@@ -94,7 +99,10 @@ def load_qwen3_gguf_text_encoder(gguf_path, config_dir, device="mps", compute_dt
     with init_empty_weights():
         model = Qwen3ForCausalLM(cfg)
 
-    name_map = get_gguf_hf_weights_map(model, "qwen3", cfg.num_hidden_layers)
+    if "processor" in inspect.signature(get_gguf_hf_weights_map).parameters:
+        name_map = get_gguf_hf_weights_map(model, TensorProcessor(), "qwen3", cfg.num_hidden_layers)
+    else:
+        name_map = get_gguf_hf_weights_map(model, "qwen3", cfg.num_hidden_layers)
     hf_to_ggml = {hf: ggml for ggml, hf in name_map.items()}
 
     reader = gguf.GGUFReader(gguf_path)

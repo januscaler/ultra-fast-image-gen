@@ -1,0 +1,391 @@
+diff --git a/src/mflux/models/flux2/model/flux2_transformer/single_transformer_block.py b/src/mflux/models/flux2/model/flux2_transformer/single_transformer_block.py
+index f62de23..3433934 100644
+--- a/src/mflux/models/flux2/model/flux2_transformer/single_transformer_block.py
++++ b/src/mflux/models/flux2/model/flux2_transformer/single_transformer_block.py
+@@ -1,9 +1,81 @@
++import os
++
+ import mlx.core as mx
+ from mlx import nn
+ 
+ from mflux.models.flux2.model.flux2_transformer.parallel_self_attention import Flux2ParallelSelfAttention
+ 
+ 
++MFLUX_HS_STRIDE = int(os.environ.get("MFLUX_HS_STRIDE", "1"))
++MFLUX_HS_SKIP_TRANSFORMER_FORWARDS = int(os.environ.get("MFLUX_HS_SKIP_TRANSFORMER_FORWARDS", "0"))
++MFLUX_HS_MAX_TRANSFORMER_FORWARD = int(os.environ.get("MFLUX_HS_MAX_TRANSFORMER_FORWARD", "0"))
++MFLUX_HS_SINGLE_START_FRAC = float(os.environ.get("MFLUX_HS_SINGLE_START_FRAC", "0.0"))
++MFLUX_HS_SINGLE_END_FRAC = float(os.environ.get("MFLUX_HS_SINGLE_END_FRAC", "1.0"))
++MFLUX_HS_VERBOSE = os.environ.get("MFLUX_HS_VERBOSE", "0") not in ("", "0", "false", "False")
++_HS_PRINTED = False
++
++
++def _perfect_square(n: int) -> int | None:
++    if n <= 0:
++        return None
++    side = int(n**0.5)
++    return side if side * side == n else None
++
++
++def _infer_text_and_side(seq_len: int) -> tuple[int | None, int | None]:
++    for text_len in (512, 256, 1024, 0):
++        side = _perfect_square(seq_len - text_len)
++        if side is not None:
++            return text_len, side
++
++    for text_len in range(0, min(2048, seq_len) + 1):
++        side = _perfect_square(seq_len - text_len)
++        if side is not None:
++            return text_len, side
++
++    return None, None
++
++
++def _in_frac_window(index: int, total: int, start_frac: float, end_frac: float) -> bool:
++    start = int(total * start_frac)
++    end = int(total * end_frac)
++    return start <= index < max(start + 1, end)
++
++
++def _downsample_image_tokens(img: mx.array, side: int, stride: int) -> mx.array:
++    batch, _, dim = img.shape
++    low_side = side // stride
++    grid = img.reshape(batch, side, side, dim)
++    low = grid.reshape(batch, low_side, stride, low_side, stride, dim).mean(axis=(2, 4))
++    return low.reshape(batch, low_side * low_side, dim)
++
++
++def _upsample_image_tokens(img_low: mx.array, side: int, stride: int) -> mx.array:
++    batch, _, dim = img_low.shape
++    low_side = side // stride
++    grid = img_low.reshape(batch, low_side, low_side, dim)
++    up = mx.repeat(mx.repeat(grid, stride, axis=1), stride, axis=2)
++    return up.reshape(batch, side * side, dim)
++
++
++def _reduced_rotary_emb(image_rotary_emb, text_len: int, side: int, stride: int):
++    if image_rotary_emb is None:
++        return None
++
++    low_side = side // stride
++    yy = mx.arange(low_side, dtype=mx.int32) * stride + stride // 2
++    xx = mx.arange(low_side, dtype=mx.int32) * stride + stride // 2
++    grid_y, grid_x = mx.meshgrid(yy, xx, indexing="ij")
++    image_idx = (grid_y * side + grid_x).reshape(-1)
++
++    reduced = []
++    for emb in image_rotary_emb:
++        text_emb = emb[:text_len]
++        img_emb = emb[text_len:][image_idx]
++        reduced.append(mx.concatenate([text_emb, img_emb], axis=0))
++    return tuple(reduced)
++
++
+ class Flux2SingleTransformerBlock(nn.Module):
+     def __init__(self, dim: int, num_attention_heads: int, attention_head_dim: int, mlp_ratio: float = 3.0):
+         super().__init__()
+@@ -21,9 +93,62 @@ class Flux2SingleTransformerBlock(nn.Module):
+         temb_mod_params,
+         image_rotary_emb,
+     ):
++        if self._hs_active(hidden_states):
++            return self._call_hidden_compressed(hidden_states, temb_mod_params, image_rotary_emb)
++
+         mod_shift, mod_scale, mod_gate = temb_mod_params
+         norm_hidden_states = self.norm(hidden_states)
+         norm_hidden_states = (1 + mod_scale) * norm_hidden_states + mod_shift
+         attn_output = self.attn(norm_hidden_states, image_rotary_emb)
+         hidden_states = hidden_states + mod_gate * attn_output
+         return hidden_states
++
++    def _hs_active(self, hidden_states: mx.array) -> bool:
++        if MFLUX_HS_STRIDE <= 1 or MFLUX_HS_MAX_TRANSFORMER_FORWARD <= 0:
++            return False
++
++        call_index = getattr(self, "_mflux_hs_call_index", None)
++        block_index = getattr(self, "_mflux_hs_block_index", None)
++        block_total = getattr(self, "_mflux_hs_block_total", None)
++        if call_index is None or block_index is None or block_total is None:
++            return False
++
++        if call_index < MFLUX_HS_SKIP_TRANSFORMER_FORWARDS or call_index >= MFLUX_HS_MAX_TRANSFORMER_FORWARD:
++            return False
++
++        if not _in_frac_window(block_index, block_total, MFLUX_HS_SINGLE_START_FRAC, MFLUX_HS_SINGLE_END_FRAC):
++            return False
++
++        text_len, side = _infer_text_and_side(hidden_states.shape[1])
++        return text_len is not None and side % MFLUX_HS_STRIDE == 0
++
++    def _call_hidden_compressed(self, hidden_states: mx.array, temb_mod_params, image_rotary_emb):
++        global _HS_PRINTED
++
++        text_len, side = _infer_text_and_side(hidden_states.shape[1])
++        if text_len is None:
++            return self.__call__(hidden_states, temb_mod_params, image_rotary_emb)
++
++        if MFLUX_HS_VERBOSE and not _HS_PRINTED:
++            low_side = side // MFLUX_HS_STRIDE
++            before = hidden_states.shape[1]
++            after = text_len + low_side * low_side
++            print(f"MFLUX_HS active: {before} -> {after} tokens, stride={MFLUX_HS_STRIDE}", flush=True)
++            _HS_PRINTED = True
++
++        text = hidden_states[:, :text_len]
++        img = hidden_states[:, text_len:]
++        img_low = _downsample_image_tokens(img, side, MFLUX_HS_STRIDE)
++        reduced_hidden = mx.concatenate([text, img_low], axis=1)
++        reduced_rotary = _reduced_rotary_emb(image_rotary_emb, text_len, side, MFLUX_HS_STRIDE)
++
++        mod_shift, mod_scale, mod_gate = temb_mod_params
++        norm_hidden_states = self.norm(reduced_hidden)
++        norm_hidden_states = (1 + mod_scale) * norm_hidden_states + mod_shift
++        out = reduced_hidden + mod_gate * self.attn(norm_hidden_states, reduced_rotary)
++
++        out_text = out[:, :text_len]
++        out_img_low = out[:, text_len:]
++        img_delta_low = out_img_low - img_low
++        restored_img = img + _upsample_image_tokens(img_delta_low, side, MFLUX_HS_STRIDE)
++        return mx.concatenate([out_text, restored_img], axis=1)
+diff --git a/src/mflux/models/flux2/model/flux2_transformer/transformer.py b/src/mflux/models/flux2/model/flux2_transformer/transformer.py
+index f976e5f..bf8d843 100644
+--- a/src/mflux/models/flux2/model/flux2_transformer/transformer.py
++++ b/src/mflux/models/flux2/model/flux2_transformer/transformer.py
+@@ -1,3 +1,5 @@
++import os
++
+ import mlx.core as mx
+ from mlx import nn
+ 
+@@ -10,6 +12,10 @@ from mflux.models.flux2.model.flux2_transformer.timestep_guidance_embeddings imp
+ from mflux.models.flux2.model.flux2_transformer.transformer_block import Flux2TransformerBlock
+ 
+ 
++MFLUX_HS_VERBOSE = os.environ.get("MFLUX_HS_VERBOSE", "0") not in ("", "0", "false", "False")
++MFLUX_HS_MAX_TRANSFORMER_FORWARD = int(os.environ.get("MFLUX_HS_MAX_TRANSFORMER_FORWARD", "0"))
++
++
+ class Flux2Transformer(nn.Module):
+     def __init__(
+         self,
+@@ -63,6 +69,7 @@ class Flux2Transformer(nn.Module):
+         ]
+         self.norm_out = AdaLayerNormContinuous(self.inner_dim, self.inner_dim)
+         self.proj_out = nn.Linear(self.inner_dim, patch_size * patch_size * self.out_channels, bias=False)
++        self._mflux_hs_call_index = 0
+ 
+     def __call__(
+         self,
+@@ -120,7 +127,16 @@ class Flux2Transformer(nn.Module):
+         hidden_states = mx.concatenate([encoder_hidden_states, hidden_states], axis=1)
+ 
+         temb_mod_params_single = self.single_stream_modulation(temb)[0]
+-        for block in self.single_transformer_blocks:
++        call_index = self._mflux_hs_call_index
++        self._mflux_hs_call_index += 1
++        if MFLUX_HS_VERBOSE:
++            active = call_index < MFLUX_HS_MAX_TRANSFORMER_FORWARD
++            print(f"MFLUX_HS transformer_call={call_index} compress_single={active}", flush=True)
++        block_total = len(self.single_transformer_blocks)
++        for block_index, block in enumerate(self.single_transformer_blocks):
++            block._mflux_hs_call_index = call_index
++            block._mflux_hs_block_index = block_index
++            block._mflux_hs_block_total = block_total
+             hidden_states = block(
+                 hidden_states=hidden_states,
+                 temb_mod_params=temb_mod_params_single,
+diff --git a/src/mflux/models/flux2/variants/txt2img/flux2_klein.py b/src/mflux/models/flux2/variants/txt2img/flux2_klein.py
+index 7b5dfcb..2ebf908 100644
+--- a/src/mflux/models/flux2/variants/txt2img/flux2_klein.py
++++ b/src/mflux/models/flux2/variants/txt2img/flux2_klein.py
+@@ -1,4 +1,5 @@
+ from pathlib import Path
++import os
+ 
+ import mlx.core as mx
+ from mlx import nn
+@@ -137,25 +138,47 @@ class Flux2Klein(nn.Module):
+         negative_prompt: str | None,
+         guidance: float,
+     ) -> tuple[mx.array, mx.array, mx.array | None, mx.array | None]:
+-        prompt_embeds, text_ids = Flux2PromptEncoder.encode_prompt(
+-            prompt=prompt,
+-            tokenizer=self.tokenizers["qwen3"],
+-            text_encoder=self.text_encoder,
+-            num_images_per_prompt=1,
+-            max_sequence_length=512,
+-            text_encoder_out_layers=(9, 18, 27),
+-        )
+-        negative_prompt_embeds = None
+-        negative_text_ids = None
+-        if guidance is not None and guidance > 1.0 and negative_prompt is not None:
+-            negative_prompt_embeds, negative_text_ids = Flux2PromptEncoder.encode_prompt(
+-                prompt=negative_prompt,
++        if os.environ.get("MFLUX_UNCENSORED_GGUF_TE", "0") not in ("", "0", "false", "False"):
++            from mflux.models.flux2.model.flux2_text_encoder.uncensored_gguf_prompt_encoder import (
++                encode_uncensored_gguf_prompt,
++            )
++
++            prompt_embeds, text_ids = encode_uncensored_gguf_prompt(
++                prompt=prompt,
++                max_sequence_length=512,
++                hidden_state_layers=(9, 18, 27),
++            )
++        else:
++            prompt_embeds, text_ids = Flux2PromptEncoder.encode_prompt(
++                prompt=prompt,
+                 tokenizer=self.tokenizers["qwen3"],
+                 text_encoder=self.text_encoder,
+                 num_images_per_prompt=1,
+                 max_sequence_length=512,
+                 text_encoder_out_layers=(9, 18, 27),
+             )
++        negative_prompt_embeds = None
++        negative_text_ids = None
++        if guidance is not None and guidance > 1.0 and negative_prompt is not None:
++            if os.environ.get("MFLUX_UNCENSORED_GGUF_TE", "0") not in ("", "0", "false", "False"):
++                from mflux.models.flux2.model.flux2_text_encoder.uncensored_gguf_prompt_encoder import (
++                    encode_uncensored_gguf_prompt,
++                )
++
++                negative_prompt_embeds, negative_text_ids = encode_uncensored_gguf_prompt(
++                    prompt=negative_prompt,
++                    max_sequence_length=512,
++                    hidden_state_layers=(9, 18, 27),
++                )
++            else:
++                negative_prompt_embeds, negative_text_ids = Flux2PromptEncoder.encode_prompt(
++                    prompt=negative_prompt,
++                    tokenizer=self.tokenizers["qwen3"],
++                    text_encoder=self.text_encoder,
++                    num_images_per_prompt=1,
++                    max_sequence_length=512,
++                    text_encoder_out_layers=(9, 18, 27),
++                )
+         return prompt_embeds, text_ids, negative_prompt_embeds, negative_text_ids
+ 
+     def _prepare_generation_latents(
+@@ -276,6 +299,6 @@ class Flux2Klein(nn.Module):
+                 noise = negative_noise + guidance * (noise - negative_noise)
+             return noise
+ 
+-        if AppleSiliconUtil.is_m1_or_m2():
++        if AppleSiliconUtil.is_m1_or_m2() or os.environ.get("MFLUX_DISABLE_COMPILE", "0") not in ("", "0", "false", "False"):
+             return predict
+         return mx.compile(predict)
+diff --git a/src/mflux/models/flux2/model/flux2_text_encoder/uncensored_gguf_prompt_encoder.py b/src/mflux/models/flux2/model/flux2_text_encoder/uncensored_gguf_prompt_encoder.py
+new file mode 100644
+index 0000000..e9798de
+--- /dev/null
++++ b/src/mflux/models/flux2/model/flux2_text_encoder/uncensored_gguf_prompt_encoder.py
+@@ -0,0 +1,110 @@
++import os
++import sys
++from pathlib import Path
++
++import mlx.core as mx
++import numpy as np
++
++from mflux.models.common.config.model_config import ModelConfig
++from mflux.models.flux2.model.flux2_text_encoder.prompt_encoder import Flux2PromptEncoder
++
++
++UNCENSORED_TE_REPO = "ponpoke/flux2-klein-4b-uncensored-text-encoder"
++UNCENSORED_TE_SUBDIR = "flux2-klein-4b-uncensored-text-encoder"
++UNCENSORED_TE_QUANTS = {
++    "q4_k_m": "flux2-klein-4b-uncensored-q4_k_m.gguf",
++    "q6_k": "flux2-klein-4b-uncensored-q6_k.gguf",
++    "q8_0": "flux2-klein-4b-uncensored-q8_0.gguf",
++}
++
++_TEXT_ENCODER = None
++_TOKENIZER = None
++_TE_DIR = None
++
++
++def _download_uncensored_te(quant: str) -> tuple[str, str]:
++    from huggingface_hub import hf_hub_download
++
++    if quant not in UNCENSORED_TE_QUANTS:
++        raise ValueError(f"unknown uncensored GGUF quant {quant!r}; choose from {list(UNCENSORED_TE_QUANTS)}")
++
++    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
++    gguf_path = hf_hub_download(UNCENSORED_TE_REPO, UNCENSORED_TE_QUANTS[quant], token=token)
++    cfg_path = hf_hub_download(UNCENSORED_TE_REPO, f"{UNCENSORED_TE_SUBDIR}/config.json", token=token)
++    for filename in ("tokenizer.json", "tokenizer_config.json", "generation_config.json", "chat_template.jinja"):
++        try:
++            hf_hub_download(UNCENSORED_TE_REPO, f"{UNCENSORED_TE_SUBDIR}/{filename}", token=token)
++        except Exception:
++            pass
++    return gguf_path, os.path.dirname(cfg_path)
++
++
++def _ensure_loaded():
++    global _TEXT_ENCODER, _TOKENIZER, _TE_DIR
++
++    if _TEXT_ENCODER is not None:
++        return _TEXT_ENCODER, _TOKENIZER, _TE_DIR
++
++    import torch
++    from transformers import AutoTokenizer
++
++    repo_root = Path(os.environ.get("MFLUX_UNCENSORED_GGUF_REPO_ROOT", "/Users/jacobferrari/ultra-fast-image-gen"))
++    sys.path.insert(0, str(repo_root))
++    from gguf_qwen3 import load_qwen3_gguf_text_encoder
++
++    quant = os.environ.get("MFLUX_UNCENSORED_GGUF_QUANT", "q4_k_m")
++    device = os.environ.get("MFLUX_UNCENSORED_GGUF_DEVICE", "mps")
++    gguf_path, te_dir = _download_uncensored_te(quant)
++
++    print(f"MFLUX uncensored GGUF TE: loading {quant} on {device}", flush=True)
++    _TEXT_ENCODER, quant_counts = load_qwen3_gguf_text_encoder(
++        gguf_path,
++        te_dir,
++        device=device,
++        compute_dtype=torch.bfloat16,
++    )
++    print(f"MFLUX uncensored GGUF TE tensors: {quant_counts}", flush=True)
++    _TOKENIZER = AutoTokenizer.from_pretrained(te_dir)
++    _TE_DIR = te_dir
++    return _TEXT_ENCODER, _TOKENIZER, _TE_DIR
++
++
++def encode_uncensored_gguf_prompt(
++    prompt: str | list[str],
++    max_sequence_length: int = 512,
++    hidden_state_layers: tuple[int, ...] = (9, 18, 27),
++) -> tuple[mx.array, mx.array]:
++    import torch
++
++    text_encoder, tokenizer, _ = _ensure_loaded()
++    if isinstance(prompt, str):
++        prompt = [prompt]
++
++    prompt = [
++        tokenizer.apply_chat_template(
++            [{"role": "user", "content": p if p is not None else ""}],
++            tokenize=False,
++            add_generation_prompt=True,
++            enable_thinking=False,
++        )
++        for p in prompt
++    ]
++
++    tokens = tokenizer(
++        prompt,
++        padding="max_length",
++        max_length=max_sequence_length,
++        truncation=True,
++        return_tensors="pt",
++    )
++
++    device = next(text_encoder.parameters()).device
++    tokens = {key: value.to(device) for key, value in tokens.items()}
++    with torch.inference_mode():
++        out = text_encoder(**tokens, output_hidden_states=True)
++        prompt_embeds = torch.cat([out.hidden_states[i] for i in hidden_state_layers], dim=-1)
++        prompt_embeds = prompt_embeds.float().cpu().numpy().astype(np.float32)
++
++    prompt_embeds_mx = mx.array(prompt_embeds).astype(ModelConfig.precision)
++    text_ids = Flux2PromptEncoder.prepare_text_ids(prompt_embeds_mx)
++    return prompt_embeds_mx, text_ids

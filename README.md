@@ -9,6 +9,7 @@ AI image generation and editing on Mac Silicon and CUDA. Generate images from te
 - **Multiple Models:** FLUX.2-klein and Z-Image Turbo
 - **Quantized Models:** Low memory usage with 4bit/int8 quantization
 - **Anima Turbo AIO:** Local patched Metal runner with Turbo LoRA baked into the GGUF
+- **Uncensored FLUX.2 2K lanes:** MFLUX/MLX fast path and PyTorch SDNQ fallback with MPS optimizations
 - **LoRA Support:** Load custom LoRA adapters with Z-Image Full model
 - **Cross-Platform:** Apple Silicon (MPS) and NVIDIA GPUs (CUDA)
 
@@ -16,6 +17,8 @@ AI image generation and editing on Mac Silicon and CUDA. Generate images from te
 
 | Model | VRAM | Features | Speed |
 |-------|------|----------|-------|
+| FLUX.2-klein-4B Uncensored MFLUX HS | ~7GB RSS @ 2K | Text-to-image, uncensored GGUF TE, validated to 2K | Fastest current 2K FLUX lane |
+| FLUX.2-klein-4B Uncensored SDNQ HS | ~8GB MPS / low RAM @ 2K | Text-to-image, uncensored GGUF TE, exact chunked MPS attention + HS | PyTorch 2K fallback |
 | FLUX.2-klein-4B (4bit SDNQ) | <8GB @ 512px, <16GB @ 1024px | Text-to-image + Image editing | Fast |
 | FLUX.2-klein-9B (4bit SDNQ) | ~12GB @ 512px, ~20GB @ 1024px | Text-to-image + Image editing (Higher Quality) | Fast |
 | FLUX.2-klein-4B (Int8) | ~16GB | Text-to-image + Image editing | Fast |
@@ -23,14 +26,20 @@ AI image generation and editing on Mac Silicon and CUDA. Generate images from te
 | Anima Turbo AIO Q4 (Metal) | ~3GB model + unified memory | Text-to-image, baked Turbo LoRA | ~16s internal @ 512x768 / 8 steps |
 | Z-Image Turbo (Full) | ~24GB | Text-to-image + LoRA | Slower |
 
+The uncensored variants do not re-download a separate base model: the SDNQ HS
+lane and the plain uncensored model reuse the FLUX.2-klein-4B (4bit SDNQ)
+backbone, so the only extra download is the uncensored Qwen3 text encoder
+(~2.5GB GGUF at the default `q4_k_m` quant).
+
 ## Quick Start (1-Click)
 
 1. Download/clone the repo
 2. **Double-click `Launch.command`**
 3. First run will auto-install dependencies (~5 min); later runs reinstall if `requirements.txt` changed
 4. The launcher installs/builds the patched Anima Metal runner if needed
-5. The Anima GGUF auto-downloads on first Anima generation
-6. Browser opens automatically to the UI
+5. The launcher installs the patched MFLUX runtime for the Uncensored 2K fast lane if needed
+6. The Anima GGUF auto-downloads on first Anima generation
+7. Browser opens automatically to the UI
 
 ## Manual Installation
 
@@ -60,6 +69,22 @@ The downloaded `Anima-P3-Turbo-AIO-Q4_K.gguf` already has the Anima Turbo LoRA
 merged in. The app does not need a separate `anima-turbo-lora-v0.1.safetensors`
 file for this model.
 
+### MFLUX HS 2K Lane Fresh Install
+
+`Launch.command` runs this automatically when the MFLUX runtime is missing:
+
+```bash
+scripts/setup_mflux_hs.sh
+```
+
+The setup script clones [mflux](https://github.com/filipstrand/mflux) at the
+tested 0.17.5 revision into `~/.cache/ultra-fast-image-gen/mflux`, applies the
+bundled hidden-state-compression + uncensored-GGUF-text-encoder patch
+(`patches/mflux_hs_uncensored_gguf.patch`), and pre-builds the `uv`
+environment. Only the "FLUX.2-klein-4B Uncensored MFLUX HS" model needs this;
+the SDNQ HS 2K lane runs on the normal Python dependencies. Override the
+install location with `ULTRA_FAST_MFLUX_HS_DIR`.
+
 ## Usage
 
 ### Web UI
@@ -72,7 +97,9 @@ Then open http://localhost:7860 in your browser.
 
 ### Model Selection
 
-- **FLUX.2-klein-4B (4bit SDNQ):** Default. Lowest memory, supports image editing
+- **FLUX.2-klein-4B Uncensored MFLUX HS:** Default. Fastest 2K text-to-image lane (~100s @ 2048x2048). Uses the patched MFLUX runtime (`scripts/setup_mflux_hs.sh`) plus the uncensored Qwen GGUF text encoder
+- **FLUX.2-klein-4B Uncensored SDNQ HS:** PyTorch SDNQ 2K text-to-image lane with exact MPS query chunking and hidden-state compression; no extra setup
+- **FLUX.2-klein-4B (4bit SDNQ):** Lowest memory, supports image editing
 - **FLUX.2-klein-9B (4bit SDNQ):** Higher quality 9B model, more memory
 - **FLUX.2-klein-4B (Int8):** Alternative quantization, more memory
 - **Z-Image Turbo (Quantized):** Fastest text-to-image, no image editing
@@ -81,7 +108,7 @@ Then open http://localhost:7860 in your browser.
 
 ### Image Editing (FLUX.2-klein)
 
-1. Select a FLUX.2-klein model from the dropdown (default)
+1. Select a classic FLUX.2-klein model from the dropdown (4bit SDNQ, 9B, or Int8 — the 2K uncensored lanes are text-to-image in the UI)
 2. Upload up to 6 images in the gallery
 3. Write a prompt describing the changes you want
 4. Select output resolution (1024px, 1280px, or 1536px)
@@ -106,6 +133,12 @@ python generate.py flux2-4b-int8 a beautiful sunset --guidance 3.5 --steps 28
 
 # FLUX.2-klein-9B (4bit SDNQ) — higher quality
 python generate.py flux2-9b-sdnq a beautiful sunset --guidance 3.5 --steps 28
+
+# FLUX.2-klein-4B Uncensored MFLUX/MLX HS — fastest current 2K path
+python generate.py flux2-4b-uncensored-mflux-hs a beautiful sunset --width 2048 --height 2048 --steps 4
+
+# FLUX.2-klein-4B Uncensored PyTorch SDNQ HS — optimized PyTorch/MPS 2K path
+python generate.py flux2-4b-uncensored-sdnq-hs a beautiful sunset --width 2048 --height 2048 --steps 4
 
 # Image-to-image editing (FLUX.2-klein models only)
 python generate.py flux2-4b-sdnq transform the fox into a wolf --input-images ref.png
@@ -142,6 +175,18 @@ Quotes around the prompt are optional — all words before the first `--flag` ar
 | `--guidance` | 3.5 | Classifier-free guidance scale |
 | `--input-images` | — | Up to 6 reference images for editing |
 
+**Uncensored 2K speed-lane options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--steps` | 4 | Distilled klein inference steps |
+| `--guidance` | 0.0 | Guidance scale |
+| `--gguf-quant` | q4_k_m | Uncensored Qwen GGUF text encoder quant |
+| `--qchunk` | 1024 | PyTorch MPS attention query chunk (`sdnq-hs` only) |
+| `--hs-stride` | 2 | Hidden-state compression stride |
+| `--hs-max-transformer-forward` | steps - 1 | Leave the final transformer forward exact |
+| `--mflux-dir` | ~/.cache/ultra-fast-image-gen/mflux | Patched MFLUX checkout (`mflux-hs` only; see `scripts/setup_mflux_hs.sh`) |
+
 **Anima options:**
 
 | Option | Default | Description |
@@ -158,6 +203,13 @@ Quotes around the prompt are optional — all words before the first `--flag` ar
 |----------|------------|-------|------|
 | Apple Silicon | 512x512 | 4 | ~8s |
 | CUDA (RTX 3090) | 512x512 | 4 | ~3s |
+
+### FLUX.2-klein-4B Uncensored 2K Speed Lanes
+
+| Backend | Resolution | Steps | Time | Notes |
+|---------|------------|-------|------|-------|
+| MFLUX/MLX HS | 2048x2048 | 4 | 100.2s fresh-process wall / ~69s denoise | Includes uncensored GGUF TE load in fresh CLI process |
+| PyTorch SDNQ HS | 2048x2048 | 4 | ~110s generation wall | Exact query-chunked MPS attention + HS compression |
 
 ### Z-Image Turbo (Quantized)
 
@@ -184,6 +236,8 @@ Recommended settings:
 
 | Model | RAM/VRAM Required |
 |-------|-------------------|
+| FLUX.2-klein-4B Uncensored MFLUX HS | ~7GB RSS @ 2048px |
+| FLUX.2-klein-4B Uncensored SDNQ HS | Low MPS memory @ 2048px; slower PyTorch fallback |
 | FLUX.2-klein-4B (4bit SDNQ) | 8GB @ 512px, 16GB @ 1024px |
 | FLUX.2-klein-9B (4bit SDNQ) | 12GB @ 512px, 20GB @ 1024px |
 | FLUX.2-klein-4B (Int8) | 16GB |
