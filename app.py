@@ -87,20 +87,20 @@ MODEL_CHOICES = [
 MODEL_NOTES = {
     "FLUX.2-klein-4B Uncensored MFLUX HS (2K Fast)": (
         "**2K-ready** — settings auto-set to 2048x2048 / 4 steps / guidance 0. "
-        "Fastest 2K lane: ~100s per image, ~7GB RAM. Needs the patched MFLUX runtime "
+        "Fastest 2K lane: ≈100s per image, ≈7GB RAM. Needs the patched MFLUX runtime "
         "(one-time `scripts/setup_mflux_hs.sh`; Launch.command installs it automatically). "
-        "Uncensored text encoder (~2.5GB GGUF) downloads on first use."
+        "Uncensored text encoder (≈2.5GB GGUF) downloads on first use."
     ),
     "FLUX.2-klein-4B Uncensored SDNQ HS (PyTorch 2K)": (
         "**2K-ready** — settings auto-set to 2048x2048 / 4 steps / guidance 0. "
-        "Pure PyTorch, no extra setup: ~110s per 2K image, low MPS memory. "
+        "Pure PyTorch, no extra setup: ≈110s per 2K image, low MPS memory. "
         "Shares the klein-4B (4bit SDNQ) base model — only the uncensored text encoder "
-        "(~2.5GB GGUF) downloads extra."
+        "(≈2.5GB GGUF) downloads extra."
     ),
     "FLUX.2-klein-4B Uncensored (q4_k_m TE)": (
         "Standard klein-4B pipeline with the uncensored text encoder, image editing included. "
         "Shares the klein-4B (4bit SDNQ) base model — only the uncensored text encoder "
-        "(~2.5GB GGUF) downloads extra."
+        "(≈2.5GB GGUF) downloads extra."
     ),
 }
 
