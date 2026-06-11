@@ -317,10 +317,15 @@ or `.cursorrules` so the agent reaches for the tools:
 ```markdown
 When asked to create or modify visual assets (e.g. "generate a hero banner",
 "make the logo background dark"), use the `generate_image` / `edit_image`
-tools from the `ultra-fast-image-gen` MCP server. Default to
-model="flux2-9b-sdnq" for quality or "zimage-quant" for speed, and save
+tools from the `ultra-fast-image-gen` MCP server. The default model
+"zimage-quant" is ultra-fast and lowest-memory; use "flux2-4b-sdnq" or
+"flux2-9b-sdnq" only when higher quality is explicitly requested. Save
 outputs to logical project paths (e.g. public/images/hero.png).
 ```
+
+> No `HF_TOKEN` is needed for the standard models (Z-Image, FLUX.2-klein,
+> Anima) — weights download to the local Hugging Face cache on first use.
+> The token only matters for the gated uncensored text encoder.
 
 > Heads-up: an MCP generation and a web-UI generation each load their own
 > model copy, so running both at once doubles memory use.
