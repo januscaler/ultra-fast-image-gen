@@ -329,7 +329,7 @@ index 0000000..e9798de
 +    import torch
 +    from transformers import AutoTokenizer
 +
-+    repo_root = Path(os.environ.get("MFLUX_UNCENSORED_GGUF_REPO_ROOT", "/Users/jacobferrari/ultra-fast-image-gen"))
++    repo_root = Path(os.environ.get("MFLUX_UNCENSORED_GGUF_REPO_ROOT", "."))
 +    sys.path.insert(0, str(repo_root))
 +    from gguf_qwen3 import load_qwen3_gguf_text_encoder
 +
