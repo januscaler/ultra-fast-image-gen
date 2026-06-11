@@ -22,6 +22,8 @@ dependencies = [
     "sdnq",
     "setuptools>=80.9.0",
     "kernels>=0.11.7",
+    "python-dotenv",
+    "gguf>=0.10.0",
 ]
 
 [tool.uv]

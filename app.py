@@ -45,9 +45,12 @@ from loaders import (
     load_flux2_klein_pipeline,
     load_flux2_klein_sdnq_pipeline,
     load_flux2_klein_9b_sdnq_pipeline,
+    load_flux2_klein_uncensored_pipeline,
 )
 
 DEFAULT_OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "Pictures", "ultra-fast-image-gen")
+MFLUX_HS_MODEL_TYPE = "flux2-klein-uncensored-mflux-hs"
+PYTORCH_SDNQ_HS_MODEL_TYPE = "flux2-klein-uncensored-sdnq-hs"
 
 
 def cleanup_gradio_cache():
@@ -69,13 +72,38 @@ current_lora_path = None
 
 # Model choices
 MODEL_CHOICES = [
+    "FLUX.2-klein-4B Uncensored MFLUX HS (2K Fast)",
+    "FLUX.2-klein-4B Uncensored SDNQ HS (PyTorch 2K)",
     "FLUX.2-klein-4B (4bit SDNQ - Low VRAM)",
     "FLUX.2-klein-9B (4bit SDNQ - Higher Quality)",
     "FLUX.2-klein-4B (Int8)",
+    "FLUX.2-klein-4B Uncensored (q4_k_m TE)",
     "Z-Image Turbo (Quantized - Fast)",
     ANIMA_MODEL_CHOICE,
     "Z-Image Turbo (Full - LoRA support)",
 ]
+
+# Shown under the dropdown so requirements are clear before the first generate.
+MODEL_NOTES = {
+    "FLUX.2-klein-4B Uncensored MFLUX HS (2K Fast)": (
+        "**2K-ready** — settings auto-set to 2048x2048 / 4 steps / guidance 0. "
+        "Fastest 2K lane: ≈100s per image, ≈7GB RAM. Needs the patched MFLUX runtime "
+        "(one-time `scripts/setup_mflux_hs.sh`; Launch.command installs it automatically). "
+        "Uncensored text encoder (≈2.5GB GGUF) downloads on first use — gated repo, so put a "
+        "Hugging Face token in `.env` (`HF_TOKEN=...`) and accept the terms on the model page."
+    ),
+    "FLUX.2-klein-4B Uncensored SDNQ HS (PyTorch 2K)": (
+        "**2K-ready** — settings auto-set to 2048x2048 / 4 steps / guidance 0. "
+        "Pure PyTorch, no extra setup: ≈110s per 2K image, low MPS memory. "
+        "Shares the klein-4B (4bit SDNQ) base model — only the uncensored text encoder "
+        "(≈2.5GB GGUF, gated repo: needs `HF_TOKEN` in `.env`) downloads extra."
+    ),
+    "FLUX.2-klein-4B Uncensored (q4_k_m TE)": (
+        "Standard klein-4B pipeline with the uncensored text encoder, image editing included. "
+        "Shares the klein-4B (4bit SDNQ) base model — only the uncensored text encoder "
+        "(≈2.5GB GGUF, gated repo: needs `HF_TOKEN` in `.env`) downloads extra."
+    ),
+}
 
 
 def get_available_devices():
@@ -94,6 +122,12 @@ def load_pipeline(model_choice: str, device: str = "mps"):
     
     if is_anima_model_choice(model_choice):
         model_type = ANIMA_MODEL_TYPE
+    elif "MFLUX HS" in model_choice:
+        model_type = MFLUX_HS_MODEL_TYPE
+    elif "SDNQ HS" in model_choice:
+        model_type = PYTORCH_SDNQ_HS_MODEL_TYPE
+    elif "Uncensored" in model_choice:
+        model_type = "flux2-klein-uncensored"
     elif "Quantized" in model_choice:
         model_type = "zimage-quant"
     elif "Full" in model_choice:
@@ -121,6 +155,21 @@ def load_pipeline(model_choice: str, device: str = "mps"):
         current_lora_path = None
         print("Using external Anima AIO Metal runner.")
         return None
+
+    if model_type == MFLUX_HS_MODEL_TYPE:
+        if pipe is not None:
+            print(f"Switching from {current_model} to {model_type}...")
+            del pipe
+            pipe = None
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+        current_device = "mlx/mps"
+        current_model = model_type
+        current_lora_path = None
+        print("Using external patched MFLUX/MLX HS runner.")
+        return None
     
     if pipe is not None and current_device == device and current_model == model_type:
         return pipe
@@ -136,6 +185,22 @@ def load_pipeline(model_choice: str, device: str = "mps"):
     
     if model_type == "flux2-klein-int8":
         pipe = load_flux2_klein_pipeline(device)
+    elif model_type == "flux2-klein-uncensored":
+        pipe = load_flux2_klein_uncensored_pipeline(device, quant="q4_k_m")
+    elif model_type == PYTORCH_SDNQ_HS_MODEL_TYPE:
+        from flux2_sdnq_hs import Flux2SdnqHsConfig, install_flux2_sdnq_hs_optimizations
+
+        pipe = load_flux2_klein_uncensored_pipeline(device, quant="q4_k_m")
+        cfg = Flux2SdnqHsConfig.for_steps(
+            4,
+            qchunk=1024,
+            hs_stride=2,
+            hs_skip_transformer_forwards=0,
+            hs_max_transformer_forward=3,
+            hs_single_start_frac=0.0,
+            hs_single_end_frac=1.0,
+        )
+        install_flux2_sdnq_hs_optimizations(pipe, cfg)
     elif model_type == "flux2-klein-sdnq":
         pipe = load_flux2_klein_sdnq_pipeline(device)
     elif model_type == "flux2-klein-9b-sdnq":
@@ -231,6 +296,47 @@ def generate_image(
     if seed == -1:
         seed = torch.randint(0, 2**32, (1,)).item()
 
+    if current_model == MFLUX_HS_MODEL_TYPE:
+        from mflux_hs_uncensored import generate_mflux_hs_uncensored
+
+        output_path = None
+        if auto_save:
+            output_path = os.path.join(
+                get_output_dir(output_dir),
+                datetime.now().strftime("%Y%m%d_%H%M%S_mflux_hs.png"),
+            )
+        else:
+            output_path = os.path.join(tempfile.gettempdir(), "mflux_hs_gradio_latest.png")
+
+        try:
+            result = generate_mflux_hs_uncensored(
+                prompt,
+                height=int(height),
+                width=int(width),
+                steps=int(steps),
+                seed=int(seed),
+                output_path=output_path,
+                timeout=180,
+            )
+        except FileNotFoundError as e:
+            return None, str(e)
+        except (RuntimeError, TimeoutError) as e:
+            msg = str(e)
+            if "gated" in msg.lower() or "401" in msg:
+                return None, (
+                    "The uncensored text encoder repo is gated on Hugging Face. "
+                    "Accept the terms at huggingface.co/ponpoke/flux2-klein-4b-uncensored-text-encoder "
+                    "(instant auto-approval) and put a token in .env as HF_TOKEN=..., then retry."
+                )
+            return None, f"MFLUX generation failed: ...{msg[-600:]}"
+        info = (
+            f"Seed: {result.seed} | Model: FLUX.2-klein-4B Uncensored MFLUX HS | "
+            f"Mode: txt2img | Device: MLX/MPS | Wall: {result.elapsed_s:.1f}s"
+        )
+        if auto_save:
+            info += f" | Saved: {result.path}"
+        return result.image, info
+
     if current_model == ANIMA_MODEL_TYPE:
         preset = get_anima_preset(anima_preset)
         result = generate_anima_aio(
@@ -273,7 +379,30 @@ def generate_image(
     print_memory("Before generation")
     
     with torch.inference_mode():
-        if current_model in ("flux2-klein-int8", "flux2-klein-sdnq", "flux2-klein-9b-sdnq"):
+        if current_model == PYTORCH_SDNQ_HS_MODEL_TYPE:
+            from flux2_sdnq_hs import Flux2SdnqHsConfig, install_flux2_sdnq_hs_optimizations, reset_flux2_sdnq_hs_state
+
+            cfg = Flux2SdnqHsConfig.for_steps(
+                int(steps),
+                qchunk=1024,
+                hs_stride=2,
+                hs_skip_transformer_forwards=0,
+                hs_max_transformer_forward=max(0, int(steps) - 1),
+                hs_single_start_frac=0.0,
+                hs_single_end_frac=1.0,
+            )
+            install_flux2_sdnq_hs_optimizations(pipe, cfg)
+            reset_flux2_sdnq_hs_state(pipe)
+            image = pipe(
+                prompt=prompt,
+                height=int(height),
+                width=int(width),
+                num_inference_steps=int(steps),
+                guidance_scale=float(guidance),
+                generator=generator,
+            ).images[0]
+            mode = "txt2img"
+        elif current_model in ("flux2-klein-int8", "flux2-klein-sdnq", "flux2-klein-9b-sdnq", "flux2-klein-uncensored"):
             images_to_process = None
             if input_images is not None and len(input_images) > 0:
                 img_w, img_h = int(width), int(height)
@@ -348,6 +477,9 @@ def generate_image(
         "flux2-klein-int8": "FLUX.2-klein-4B (int8)",
         "flux2-klein-sdnq": "FLUX.2-klein-4B (4bit)",
         "flux2-klein-9b-sdnq": "FLUX.2-klein-9B (4bit)",
+        "flux2-klein-uncensored": "FLUX.2-klein-4B Uncensored (q4_k_m TE)",
+        PYTORCH_SDNQ_HS_MODEL_TYPE: "FLUX.2-klein-4B Uncensored SDNQ HS",
+        MFLUX_HS_MODEL_TYPE: "FLUX.2-klein-4B Uncensored MFLUX HS",
     }.get(current_model, current_model)
     
     info = f"Seed: {seed} | Model: {model_short} | Mode: {mode} | Device: {device}{cfg_info}{lora_info}"
@@ -409,6 +541,7 @@ KNOWN_MODELS = {
     "black-forest-labs/FLUX.2-klein-9B": "FLUX.2-klein-9B (Base)",
     "Disty0/FLUX.2-klein-4B-SDNQ-4bit-dynamic": "FLUX.2-klein-4B (4bit SDNQ)",
     "Disty0/FLUX.2-klein-9B-SDNQ-4bit-dynamic-svd-r32": "FLUX.2-klein-9B (4bit SDNQ)",
+    "ponpoke/flux2-klein-4b-uncensored-text-encoder": "FLUX.2-klein Uncensored Text Encoder GGUF",
     "Tongyi-MAI/Z-Image-Turbo": "Z-Image Turbo (Full)",
     "Disty0/Z-Image-Turbo-SDNQ-uint4-svd-r32": "Z-Image Turbo (Quantized)",
     "filipstrand/Z-Image-Turbo-mflux-4bit": "Z-Image Turbo (mflux 4bit)",
@@ -670,7 +803,9 @@ def on_resolution_preset_change(preset, images):
 
 def update_ui_for_model(model_choice):
     """Update UI visibility and defaults based on model selection."""
-    is_flux = "FLUX" in model_choice
+    is_mflux_hs = "MFLUX HS" in model_choice
+    is_fast_uncensored = is_mflux_hs or "SDNQ HS" in model_choice
+    is_flux = "FLUX" in model_choice and not is_fast_uncensored
     is_zimage_full = "Full" in model_choice
     is_anima = is_anima_model_choice(model_choice)
     
@@ -679,12 +814,18 @@ def update_ui_for_model(model_choice):
         height_default = ANIMA_DEFAULTS["height"]
         width_default = ANIMA_DEFAULTS["width"]
         steps_default = ANIMA_DEFAULTS["steps"]
+    elif is_fast_uncensored:
+        guidance_default = 0.0
+        height_default = 2048
+        width_default = 2048
+        steps_default = 4
     else:
         guidance_default = 3.5 if is_flux else 0.0
         height_default = 512
         width_default = 512
         steps_default = 4
     
+    note = MODEL_NOTES.get(model_choice, "")
     return (
         gr.update(visible=is_flux),  # img2img_label
         gr.update(visible=is_flux),  # input_image
@@ -698,6 +839,7 @@ def update_ui_for_model(model_choice):
         gr.update(value=height_default),  # height
         gr.update(value=width_default),  # width
         gr.update(value=steps_default),  # steps
+        gr.update(value=note, visible=bool(note)),  # model_info
     )
 
 
@@ -720,14 +862,16 @@ with gr.Blocks(title="Ultra Fast Image Gen") as demo:
     # Ultra Fast Image Gen
     
     AI image generation and editing on Apple Silicon and CUDA.
-    
+
     **Models:**
-    - **FLUX.2-klein-4B (Int8):** 8GB, supports image-to-image editing (default)
+    - **FLUX.2-klein Uncensored MFLUX HS:** fastest 2K lane (~100s @ 2048x2048), one-time `scripts/setup_mflux_hs.sh` (default)
+    - **FLUX.2-klein Uncensored SDNQ HS:** PyTorch 2K lane (~110s @ 2048x2048), no extra setup
+    - **FLUX.2-klein-4B (Int8):** 8GB, supports image-to-image editing
     - **Z-Image Turbo (Quantized):** 3.5GB, fastest, no LoRA
     - **Anima Turbo AIO Q4 (Metal):** local patched sd.cpp runner, defaults to 512x768 / 8 steps
     - **Z-Image Turbo (Full):** 24GB, slower, LoRA support
-    
-    **Resolutions:** Up to 2048px for txt2img. Image-to-image: 1K (16GB) or 1.5K (32GB+).
+
+    **Resolutions:** the Uncensored 2K lanes generate full 2048x2048; other models up to 2048px txt2img. Image-to-image: 1K (16GB) or 1.5K (32GB+).
     """)
 
     with gr.Row():
@@ -737,21 +881,26 @@ with gr.Blocks(title="Ultra Fast Image Gen") as demo:
                 choices=MODEL_CHOICES,
                 value=MODEL_CHOICES[0],
                 label="Model",
-                info="FLUX.2-klein supports image editing"
+                info="Uncensored 2K lanes auto-set 2048x2048; classic FLUX.2-klein supports image editing"
             )
-            
+
+            model_info = gr.Markdown(
+                value=MODEL_NOTES.get(MODEL_CHOICES[0], ""),
+                visible=bool(MODEL_NOTES.get(MODEL_CHOICES[0], "")),
+            )
+
             prompt = gr.Textbox(
                 label="Prompt",
                 placeholder="Describe the image you want to generate...",
                 lines=3,
             )
             
-            # Image input (FLUX only) - visible by default since FLUX is default
-            img2img_label = gr.Markdown("### Image Input (FLUX.2-klein only - up to 6 images)", visible=True)
+            # Image input (classic FLUX only; optimized uncensored lanes are txt2img)
+            img2img_label = gr.Markdown("### Image Input (FLUX.2-klein only - up to 6 images)", visible=False)
             input_images = gr.Gallery(
                 label="Input Images (optional - for image-to-image)",
                 type="pil",
-                visible=True,
+                visible=False,
                 columns=3,
                 height="auto",
                 interactive=True,
@@ -766,8 +915,8 @@ with gr.Blocks(title="Ultra Fast Image Gen") as demo:
             )
             
             with gr.Row():
-                height = gr.Slider(256, 2048, value=512, step=64, label="Height")
-                width = gr.Slider(256, 2048, value=512, step=64, label="Width")
+                height = gr.Slider(256, 2048, value=2048, step=64, label="Height")
+                width = gr.Slider(256, 2048, value=2048, step=64, label="Width")
 
             with gr.Row():
                 steps = gr.Slider(1, 50, value=4, step=1, label="Steps")
@@ -783,7 +932,7 @@ with gr.Blocks(title="Ultra Fast Image Gen") as demo:
 
             with gr.Row():
                 guidance_scale = gr.Slider(
-                    0.0, 10.0, value=3.5, step=0.5,
+                    0.0, 10.0, value=0.0, step=0.5,
                     label="Guidance Scale (CFG)",
                     info="FLUX: 3.5 recommended, Z-Image: 0"
                 )
@@ -874,6 +1023,7 @@ with gr.Blocks(title="Ultra Fast Image Gen") as demo:
             height,
             width,
             steps,
+            model_info,
         ],
     )
 

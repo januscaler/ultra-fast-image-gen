@@ -221,3 +221,91 @@ def load_flux2_klein_9b_sdnq_pipeline(device="mps"):
 
     print("  FLUX.2-klein-9B (SDNQ) ready!")
     return pipe
+
+
+# ---------------------------------------------------------------------------
+# FLUX.2-klein-4B with the uncensored (abliterated) Qwen3 text encoder
+#
+# The text encoder is loaded from a GGUF file and kept QUANTIZED in RAM,
+# dequantized on the fly per forward (see gguf_qwen3.py). The 4bit SDNQ
+# transformer + VAE are reused as a constant image backbone so the chosen
+# text-encoder quant is the only thing that varies between runs.
+# ---------------------------------------------------------------------------
+
+UNCENSORED_TE_REPO = "ponpoke/flux2-klein-4b-uncensored-text-encoder"
+UNCENSORED_TE_SUBDIR = "flux2-klein-4b-uncensored-text-encoder"
+UNCENSORED_TE_QUANTS = {
+    "q4_k_m": "flux2-klein-4b-uncensored-q4_k_m.gguf",
+    "q6_k": "flux2-klein-4b-uncensored-q6_k.gguf",
+    "q8_0": "flux2-klein-4b-uncensored-q8_0.gguf",
+}
+
+
+def _download_uncensored_te(quant):
+    """Fetch the chosen GGUF plus the config/tokenizer; return (gguf_path, cfg_dir)."""
+    from huggingface_hub import hf_hub_download
+
+    if quant not in UNCENSORED_TE_QUANTS:
+        raise ValueError(f"unknown quant {quant!r}; choose from {list(UNCENSORED_TE_QUANTS)}")
+
+    gguf_path = hf_hub_download(UNCENSORED_TE_REPO, UNCENSORED_TE_QUANTS[quant], token=HF_TOKEN)
+    cfg_path = hf_hub_download(
+        UNCENSORED_TE_REPO, f"{UNCENSORED_TE_SUBDIR}/config.json", token=HF_TOKEN
+    )
+    for f in (
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "generation_config.json",
+        "chat_template.jinja",
+    ):
+        try:
+            hf_hub_download(UNCENSORED_TE_REPO, f"{UNCENSORED_TE_SUBDIR}/{f}", token=HF_TOKEN)
+        except Exception:
+            pass
+    return gguf_path, os.path.dirname(cfg_path)
+
+
+def load_flux2_klein_uncensored_pipeline(device="mps", quant="q4_k_m"):
+    """FLUX.2-klein-4B with the uncensored Qwen3 text encoder from a GGUF (quant kept in RAM)."""
+    from sdnq import SDNQConfig  # noqa: F401  (registers the SDNQ quant config)
+    from diffusers import Flux2KleinPipeline
+    from transformers import AutoTokenizer
+    from gguf_qwen3 import load_qwen3_gguf_text_encoder
+
+    print(f"Loading FLUX.2-klein-4B UNCENSORED (TE quant: {quant}) on {device}...")
+    print_memory("Before loading")
+
+    gguf_path, te_dir = _download_uncensored_te(quant)
+
+    print("  Loading SDNQ transformer + VAE backbone...")
+    pipe = Flux2KleinPipeline.from_pretrained(
+        "Disty0/FLUX.2-klein-4B-SDNQ-4bit-dynamic",
+        text_encoder=None,
+        tokenizer=None,
+        torch_dtype=torch.bfloat16,
+    )
+    print_memory("After backbone")
+
+    print(f"  Loading uncensored Qwen3 text encoder from GGUF ({quant})...")
+    text_encoder, quant_counts = load_qwen3_gguf_text_encoder(
+        gguf_path, te_dir, device=device, compute_dtype=torch.bfloat16
+    )
+    print(f"  TE quantized tensors: {quant_counts}")
+    print_memory("After text encoder")
+
+    pipe.text_encoder = text_encoder
+    pipe.tokenizer = AutoTokenizer.from_pretrained(te_dir)
+    pipe.to(device)
+    print_memory("After pipe.to(device)")
+
+    pipe.enable_attention_slicing()
+    if hasattr(pipe, "enable_vae_slicing"):
+        pipe.enable_vae_slicing()
+    if hasattr(pipe, "enable_vae_tiling"):
+        pipe.enable_vae_tiling()
+    elif hasattr(getattr(pipe, "vae", None), "enable_tiling"):
+        pipe.vae.enable_tiling()
+    print_memory("After memory optimizations")
+
+    print("  FLUX.2-klein-4B UNCENSORED ready!")
+    return pipe

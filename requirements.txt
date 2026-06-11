@@ -14,3 +14,4 @@ peft>=0.17.0
 scipy
 optimum-quanto>=0.2.7
 python-dotenv
+gguf>=0.10.0

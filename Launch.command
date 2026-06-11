@@ -137,6 +137,25 @@ else
     echo "It will auto-download on the first Anima generation."
 fi
 
+# The fastest 2K lane (FLUX.2-klein Uncensored MFLUX HS) runs through a patched
+# MFLUX checkout outside this repo. Install it if missing, but don't block the
+# app on failure: the Uncensored SDNQ HS 2K lane works without it.
+echo ""
+echo "Checking MFLUX HS 2K runtime..."
+MFLUX_HS_DIR="${ULTRA_FAST_MFLUX_HS_DIR:-$HOME/.cache/ultra-fast-image-gen/mflux}"
+if [ -d "$MFLUX_HS_DIR" ]; then
+    echo "MFLUX HS runtime ready: $MFLUX_HS_DIR"
+else
+    echo "MFLUX HS runtime not installed yet. Installing (only needed for the MFLUX 2K lane)..."
+    if bash "$(pwd)/scripts/setup_mflux_hs.sh"; then
+        echo "MFLUX HS runtime ready: $MFLUX_HS_DIR"
+    else
+        echo "MFLUX HS setup did not finish. The 'Uncensored MFLUX HS' model will be unavailable;"
+        echo "the 'Uncensored SDNQ HS' 2K lane still works. Re-run scripts/setup_mflux_hs.sh to retry."
+    fi
+fi
+export ULTRA_FAST_MFLUX_HS_DIR="$MFLUX_HS_DIR"
+
 echo ""
 echo "Starting Gradio UI..."
 echo "Opening browser to http://127.0.0.1:7860"
