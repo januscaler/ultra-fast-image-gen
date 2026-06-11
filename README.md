@@ -253,6 +253,78 @@ Quotes around the prompt are optional — all words before the first `--flag` ar
 |--------|---------|-------------|
 | `--steps` | 4 | Inference steps |
 
+## MCP Server (AI coding agents)
+
+The repo doubles as a local [MCP](https://modelcontextprotocol.io) server, so
+AI coding assistants (OpenCode, Claude Desktop, Cursor, Claude Code) can
+generate and edit project assets — hero banners, icons, backgrounds — without
+cloud APIs. It exposes two tools, `generate_image` and `edit_image` (1-6
+reference images), which run the same `generate.py` CLI under the hood.
+
+Install the `mcp` package into the app's environment first:
+
+```bash
+venv/bin/pip install mcp        # or: uv sync --extra mcp
+```
+
+### OpenCode (1-click)
+
+```bash
+python3 scripts/install-opencode-mcp.py
+```
+
+The script registers the server in `~/.config/opencode/opencode.json` and
+installs a "website-visual-assets" skill. It reuses `HF_TOKEN` from your
+environment or the repo `.env` (set via the web UI's ⋯ menu), prompting only
+if neither exists.
+
+### Manual configuration
+
+**OpenCode** (`~/.config/opencode/opencode.json`):
+
+```json
+{
+  "mcp": {
+    "ultra-fast-image-gen": {
+      "type": "local",
+      "command": ["/path/to/ultra-fast-image-gen/venv/bin/python", "/path/to/ultra-fast-image-gen/mcp_server.py"],
+      "environment": { "HF_TOKEN": "hf_..." },
+      "timeout": 3600000
+    }
+  }
+}
+```
+
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "ultra-fast-image-gen": {
+      "command": "/path/to/ultra-fast-image-gen/venv/bin/python",
+      "args": ["/path/to/ultra-fast-image-gen/mcp_server.py"],
+      "env": { "HF_TOKEN": "hf_..." }
+    }
+  }
+}
+```
+
+### Agent instructions
+
+Drop something like this into your project's `CLAUDE.md`, `.opencode/agents.md`,
+or `.cursorrules` so the agent reaches for the tools:
+
+```markdown
+When asked to create or modify visual assets (e.g. "generate a hero banner",
+"make the logo background dark"), use the `generate_image` / `edit_image`
+tools from the `ultra-fast-image-gen` MCP server. Default to
+model="flux2-9b-sdnq" for quality or "zimage-quant" for speed, and save
+outputs to logical project paths (e.g. public/images/hero.png).
+```
+
+> Heads-up: an MCP generation and a web-UI generation each load their own
+> model copy, so running both at once doubles memory use.
+
 ## Benchmarks
 
 ### FLUX.2-klein-4B

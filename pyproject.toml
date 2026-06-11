@@ -38,6 +38,10 @@ bonsai = [
     "mflux ; sys_platform == 'darwin' and python_version >= '3.11'",
     "prism-image-studio ; sys_platform == 'darwin' and python_version >= '3.11'",
 ]
+# MCP server for AI coding agents (OpenCode, Claude Desktop). See README.
+mcp = [
+    "mcp>=1.0.0",
+]
 
 [tool.uv]
 dev-dependencies = []
