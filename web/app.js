@@ -139,12 +139,87 @@ function applyModelDefaults(m) {
   els.guidance.value = m.defaults.guidance;
 }
 
+function fmtBytes(n) {
+  if (n == null) return "";
+  return n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(2)} GB` : `${Math.round(n / 1024 ** 2)} MB`;
+}
+
+function renderModelControls(m, ctl) {
+  ctl.textContent = "";
+  if (!m.managed) {
+    ctl.appendChild(document.createTextNode("downloads on first use"));
+    return;
+  }
+  const dl = DOWNLOADS[m.id];
+  if (dl?.status === "running") {
+    const span = document.createElement("span");
+    span.className = "dl-progress";
+    span.dataset.dl = m.id;
+    span.textContent = dlText(dl);
+    ctl.appendChild(span);
+    return;
+  }
+  if (dl?.status === "error") {
+    const span = document.createElement("span");
+    span.className = "dl-error";
+    span.textContent = dl.error || "download failed";
+    ctl.appendChild(span);
+  }
+  if (m.downloaded) {
+    ctl.appendChild(document.createTextNode(m.size_str || "downloaded"));
+    const del = document.createElement("button");
+    del.className = "icon-link";
+    del.type = "button";
+    del.textContent = "Delete";
+    let armed = false;
+    del.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!armed) {          // inline confirm: first click arms, second deletes
+        armed = true;
+        del.textContent = "Confirm?";
+        del.classList.add("danger");
+        setTimeout(() => { armed = false; del.textContent = "Delete"; del.classList.remove("danger"); }, 3000);
+        return;
+      }
+      del.disabled = true;
+      try {
+        await api(`/api/models/${m.id}/delete`, { method: "POST" });
+        await refreshModels();
+      } catch (err) {
+        del.disabled = false;
+        ctl.appendChild(document.createTextNode(` ${err.message}`));
+      }
+    });
+    ctl.appendChild(del);
+  } else {
+    const get = document.createElement("button");
+    get.className = "icon-link";
+    get.type = "button";
+    get.textContent = dl?.status === "error" ? "Retry" : "Download";
+    get.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      get.disabled = true;
+      try {
+        await api(`/api/models/${m.id}/download`, { method: "POST" });
+        DOWNLOADS[m.id] = { status: "running", done: 0, total: null };
+        renderModelControls(m, ctl);
+      } catch (err) {
+        get.disabled = false;
+        ctl.appendChild(document.createTextNode(` ${err.message}`));
+      }
+    });
+    ctl.appendChild(get);
+  }
+}
+
 function renderModelList() {
   els.modelList.textContent = "";
   for (const m of MODELS) {
     const li = document.createElement("li");
+    li.classList.toggle("selected", m.id === modelId);
     const b = document.createElement("button");
     b.type = "button";
+    b.className = "m-select";
     b.setAttribute("aria-pressed", String(m.id === modelId));
 
     const head = document.createElement("div");
@@ -180,8 +255,53 @@ function renderModelList() {
       saveSettings();
       closePops();
     });
-    li.appendChild(b);
+
+    const ctl = document.createElement("div");
+    ctl.className = "m-ctl";
+    renderModelControls(m, ctl);
+
+    li.append(b, ctl);
     els.modelList.appendChild(li);
+  }
+}
+
+/* ---------------- download polling ---------------- */
+
+let DOWNLOADS = {};
+
+function dlText(dl) {
+  if (dl.total) {
+    const pct = Math.min(99, Math.round((dl.done / dl.total) * 100));
+    return `downloading ${pct}% · ${fmtBytes(dl.done)} / ${fmtBytes(dl.total)}`;
+  }
+  return `downloading · ${fmtBytes(dl.done)}`;
+}
+
+async function refreshModels() {
+  MODELS = await api("/api/models");
+  renderModelList();
+  syncChips();
+}
+
+async function pollDownloads() {
+  const anyRunning = Object.values(DOWNLOADS).some((d) => d.status === "running");
+  if (els.popModel.hidden && !anyRunning) return;
+  let next;
+  try { next = await api("/api/downloads"); }
+  catch { return; }
+  const finished = Object.keys(next).some(
+    (id) => DOWNLOADS[id]?.status === "running" && next[id].status !== "running"
+  );
+  DOWNLOADS = next;
+  if (finished) {
+    await refreshModels().catch(() => {});
+    return;
+  }
+  // update progress text in place to keep scroll position
+  for (const [id, dl] of Object.entries(DOWNLOADS)) {
+    if (dl.status !== "running") continue;
+    const span = els.modelList.querySelector(`[data-dl="${id}"]`);
+    if (span) span.textContent = dlText(dl);
   }
 }
 
@@ -337,6 +457,7 @@ async function pollJob(jobId) {
       lastSeed = job.images[job.images.length - 1].seed;
       selectImage(job.images[job.images.length - 1]);
     }
+    refreshModels().catch(() => {}); // a first-use download may have changed flags
   }
 }
 
@@ -463,6 +584,10 @@ async function init() {
   autoGrow();
 
   for (const [chip, pop] of POPS) bindPop(chip, pop);
+  setInterval(pollDownloads, 2000);
+  els.chipModel.addEventListener("click", () => {
+    if (!els.popModel.hidden) pollDownloads();
+  });
   document.addEventListener("click", (e) => {
     if (!e.target.isConnected) return; // re-rendered controls (e.g. presets) detach mid-bubble
     if (!e.target.closest(".pop") && !e.target.closest(".chip")) closePops();

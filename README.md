@@ -133,6 +133,13 @@ backend. It shows real per-step progress, supports batch generation (up to 8
 images per run), resolution presets, drag-and-drop image editing, a session
 gallery, storage management, and remembers your settings between visits.
 
+Each model in the picker has its own Download / Delete button with live
+progress, so you can pre-fetch weights before generating; deleting a model
+keeps any base files another downloaded model still shares. Generating with
+a model you haven't downloaded also just works — the download progress shows
+up in the status card first. Switching models unloads the previous one from
+memory before the new one loads.
+
 ### Model Selection
 
 - **FLUX.2-klein-4B Uncensored MFLUX HS:** Default. Fastest 2K text-to-image lane (~100s @ 2048x2048). Uses the patched MFLUX runtime (`scripts/setup_mflux_hs.sh`) plus the uncensored Qwen GGUF text encoder

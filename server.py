@@ -62,6 +62,32 @@ def models():
     return engine.list_models()
 
 
+@app.post("/api/models/{model_id}/download")
+def model_download(model_id: str):
+    if model_id not in engine.MODELS:
+        raise HTTPException(404, f"unknown model: {model_id}")
+    try:
+        engine.start_download(model_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"started": True}
+
+
+@app.get("/api/downloads")
+def downloads():
+    return engine.download_status()
+
+
+@app.post("/api/models/{model_id}/delete")
+def model_delete(model_id: str):
+    if model_id not in engine.MODELS:
+        raise HTTPException(404, f"unknown model: {model_id}")
+    ok, message = engine.delete_model_weights(model_id)
+    if not ok:
+        raise HTTPException(400, message)
+    return {"message": message}
+
+
 @app.post("/api/generate")
 def generate(req: GenerateRequest):
     if req.model not in engine.MODELS:

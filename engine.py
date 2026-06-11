@@ -25,6 +25,8 @@ os.environ["PYTORCH_MPS_FAST_MATH"] = "1"
 from dotenv import load_dotenv
 load_dotenv()
 
+HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+
 import torch
 from PIL import Image
 
@@ -157,7 +159,7 @@ _register(
     img2img=False,
     lora=False,
     progress="steps",
-    note="Fastest small model (~3.5GB download). Text-to-image only, no LoRA.",
+    note="Fastest small model (~6GB download). Text-to-image only, no LoRA.",
 )
 _register(
     "anima",
@@ -203,8 +205,226 @@ def mflux_hs_available():
         return False
 
 
+# ---------------------------------------------------------------------------
+# Per-model weight sets: (repo_id, allow_patterns or None, marker_file or None).
+# The marker file proves the repo is fully fetched for this model's needs;
+# None falls back to a directory-size heuristic.
+# ---------------------------------------------------------------------------
+
+_DISTY_4B = "Disty0/FLUX.2-klein-4B-SDNQ-4bit-dynamic"
+_DISTY_9B = "Disty0/FLUX.2-klein-9B-SDNQ-4bit-dynamic-svd-r32"
+_BASE_4B = "black-forest-labs/FLUX.2-klein-4B"
+_BASE_9B = "black-forest-labs/FLUX.2-klein-9B"
+_TE_REPO = "ponpoke/flux2-klein-4b-uncensored-text-encoder"
+_TE_Q4 = "flux2-klein-4b-uncensored-q4_k_m.gguf"
+_TE_SPEC = (_TE_REPO, [_TE_Q4, "flux2-klein-4b-uncensored-text-encoder/*"], _TE_Q4)
+
+MODEL_DOWNLOADS = {
+    "mflux-hs-2k": [(_BASE_4B, None, "model_index.json"), _TE_SPEC],
+    "sdnq-hs-2k": [(_DISTY_4B, None, "model_index.json"), _TE_SPEC],
+    "flux2-4b-sdnq": [
+        (_DISTY_4B, None, "model_index.json"),
+        (_BASE_4B, ["tokenizer/*"], "tokenizer/tokenizer_config.json"),
+    ],
+    "flux2-9b-sdnq": [
+        (_DISTY_9B, None, "model_index.json"),
+        (_BASE_9B, ["tokenizer/*"], "tokenizer/tokenizer_config.json"),
+    ],
+    "flux2-4b-int8": [
+        ("aydin99/FLUX.2-klein-4B-int8", None, "text_encoder/quanto_qmap.json"),
+        (_BASE_4B, None, "model_index.json"),
+    ],
+    "flux2-4b-uncensored": [(_DISTY_4B, None, "model_index.json"), _TE_SPEC],
+    "zimage-quant": [("Disty0/Z-Image-Turbo-SDNQ-uint4-svd-r32", None, "model_index.json")],
+    "zimage-full": [("Tongyi-MAI/Z-Image-Turbo", None, "model_index.json")],
+    "bonsai": [("prism-ml/bonsai-image-ternary-4B-mlx-2bit", None, None)],
+    # anima is intentionally absent: its GGUF lives outside the HF cache and the
+    # Metal runner fetches it on first generation.
+}
+
+
+def _repo_cache_path(repo_id):
+    return os.path.join(_hf_cache_dir(), f"models--{repo_id.replace('/', '--')}")
+
+
+def _repo_bytes(repo_id):
+    path = _repo_cache_path(repo_id)
+    blobs = os.path.join(path, "blobs")
+    return _dir_size(blobs if os.path.isdir(blobs) else path)
+
+
+def _repo_present(repo_id, marker):
+    if marker is None:
+        return _repo_bytes(repo_id) > 100 * 1024**2
+    from huggingface_hub import hf_hub_download
+
+    try:
+        hf_hub_download(repo_id, marker, local_files_only=True)
+        return True
+    except Exception:
+        return False
+
+
+def model_downloaded(model_id):
+    spec = MODEL_DOWNLOADS.get(model_id)
+    if not spec:
+        return None  # managed by an external runner
+    return all(_repo_present(repo, marker) for repo, _patterns, marker in spec)
+
+
+def _repo_matched_bytes(repo, patterns):
+    """Disk usage of just the files this model needs from a cached repo."""
+    if patterns is None:
+        return _repo_bytes(repo)
+    import fnmatch
+
+    snaps = os.path.join(_repo_cache_path(repo), "snapshots")
+    total = 0
+    seen = set()
+    if os.path.isdir(snaps):
+        for rev in os.listdir(snaps):
+            root = os.path.join(snaps, rev)
+            for dirpath, _dn, filenames in os.walk(root):
+                for fn in filenames:
+                    fp = os.path.join(dirpath, fn)
+                    rel = os.path.relpath(fp, root)
+                    if any(fnmatch.fnmatch(rel, p) for p in patterns):
+                        real = os.path.realpath(fp)
+                        if real in seen:
+                            continue
+                        seen.add(real)
+                        try:
+                            total += os.path.getsize(fp)
+                        except OSError:
+                            pass
+    return total
+
+
+def model_disk_bytes(model_id):
+    spec = MODEL_DOWNLOADS.get(model_id) or []
+    return sum(_repo_matched_bytes(repo, patterns) for repo, patterns, _m in spec)
+
+
+# ---------------------------------------------------------------------------
+# Explicit downloads with progress (also used for first-use downloads in jobs)
+# ---------------------------------------------------------------------------
+
+_downloads = {}  # model_id -> {status, done, total, error}
+
+
+def download_status():
+    return {
+        mid: {k: st[k] for k in ("status", "done", "total", "error")}
+        for mid, st in _downloads.items()
+    }
+
+
+def start_download(model_id):
+    spec = MODEL_DOWNLOADS.get(model_id)
+    if not spec:
+        raise ValueError("This model manages its own download on first use.")
+    st = _downloads.get(model_id)
+    if st and st["status"] == "running":
+        return
+    st = {"status": "running", "done": 0, "total": None, "error": None}
+    _downloads[model_id] = st
+    threading.Thread(target=_download_worker, args=(model_id, spec, st),
+                     daemon=True, name=f"ufig-dl-{model_id}").start()
+
+
+def _download_worker(model_id, spec, st):
+    import fnmatch
+
+    from huggingface_hub import HfApi, hf_hub_download, snapshot_download
+
+    stop = threading.Event()
+    try:
+        # total: bytes this model needs; present: how many of those bytes are
+        # already complete locally (shared base repos, resumed downloads).
+        api = HfApi(token=HF_TOKEN)
+        total = 0
+        present = 0
+        for repo, patterns, _marker in spec:
+            info = api.model_info(repo, files_metadata=True)
+            for sib in info.siblings or []:
+                if not sib.size:
+                    continue
+                if patterns is None or any(fnmatch.fnmatch(sib.rfilename, p) for p in patterns):
+                    total += sib.size
+                    try:
+                        hf_hub_download(repo, sib.rfilename, local_files_only=True)
+                        present += sib.size
+                    except Exception:
+                        pass
+        st["total"] = total or None
+
+        # Cache dirs can hold bytes this model does not need (e.g. the full
+        # base model when only its tokenizer is required), so progress is the
+        # growth since start on top of the matched bytes already present.
+        baseline = sum(_repo_bytes(repo) for repo, _p, _m in spec)
+        st["done"] = min(present, total)
+
+        def _poll():
+            while not stop.wait(1.0):
+                now = sum(_repo_bytes(repo) for repo, _p, _m in spec)
+                done = present + max(0, now - baseline)
+                st["done"] = min(done, total) if total else done
+
+        threading.Thread(target=_poll, daemon=True).start()
+
+        for repo, patterns, _marker in spec:
+            snapshot_download(repo, allow_patterns=patterns, token=HF_TOKEN)
+
+        st["done"] = st["total"] or sum(_repo_bytes(repo) for repo, _p, _m in spec)
+        st["status"] = "done"
+    except Exception as exc:
+        traceback.print_exc()
+        st["status"] = "error"
+        st["error"] = _friendly_error(exc)
+    finally:
+        stop.set()
+
+
+def delete_model_weights(model_id):
+    """Delete this model's cached repos, keeping anything another downloaded model still needs."""
+    if _any_job_active():
+        return False, "A generation is queued or running — wait for it to finish before deleting models."
+    if any(st["status"] == "running" for st in _downloads.values()):
+        return False, "A download is in progress — wait for it to finish first."
+    spec = MODEL_DOWNLOADS.get(model_id)
+    if not spec:
+        return False, "This model is managed by its own runner — use the Storage panel."
+
+    mine = {repo for repo, _p, _m in spec}
+    shared = set()
+    for other_id, other_spec in MODEL_DOWNLOADS.items():
+        if other_id != model_id and model_downloaded(other_id):
+            shared |= {repo for repo, _p, _m in other_spec}
+    deletable = mine - shared
+    if not deletable:
+        return False, "All of this model's files are shared with other downloaded models."
+
+    if _pipe is not None and any(
+        repo in _MODEL_REPOS.get(_pipe_model or "", ()) for repo in deletable
+    ):
+        _free_pipe()
+
+    freed = 0
+    for repo in deletable:
+        path = _repo_cache_path(repo)
+        if os.path.exists(path):
+            freed += _repo_bytes(repo)
+            shutil.rmtree(path, ignore_errors=True)
+    _downloads.pop(model_id, None)
+    kept = mine & shared
+    msg = f"Deleted ({format_size(freed)} freed)"
+    if kept:
+        msg += " — shared base files kept for other models"
+    return True, msg
+
+
 def list_models():
-    """Model registry for the API, with availability flags resolved now."""
+    """Model registry for the API, with availability and download state resolved now."""
     out = []
     for mid, m in MODELS.items():
         if mid == "bonsai" and not bonsai_available():
@@ -212,6 +432,10 @@ def list_models():
         entry = {k: v for k, v in m.items()}
         if mid == "mflux-hs-2k":
             entry["setup_required"] = not mflux_hs_available()
+        downloaded = model_downloaded(mid)
+        entry["managed"] = downloaded is not None
+        entry["downloaded"] = bool(downloaded)
+        entry["size_str"] = format_size(model_disk_bytes(mid)) if downloaded else None
         out.append(entry)
     return out
 
@@ -572,6 +796,26 @@ def _run_bonsai(job, p):
         job["progress"] = (i + 1) / count
 
 
+def _download_for_job(job, model_id):
+    """Run the missing-weights download with live progress before generating."""
+    job["stage"] = "Downloading model (first use)"
+    start_download(model_id)
+    while True:
+        st = _downloads.get(model_id)
+        if st is None or st["status"] == "error":
+            raise RuntimeError((st or {}).get("error") or "download failed")
+        if st["status"] == "done":
+            break
+        if st["total"]:
+            job["progress"] = min(0.99, st["done"] / st["total"])
+            job["stage"] = (
+                f"Downloading model ({format_size(st['done'])} / {format_size(st['total'])})"
+            )
+        time.sleep(0.5)
+    job["progress"] = None
+    job["stage"] = "Loading model"
+
+
 def _friendly_error(exc):
     msg = str(exc)
     if "gated" in msg.lower() or "401" in msg:
@@ -602,6 +846,8 @@ def _worker():
             try:
                 if model_id not in MODELS:
                     raise ValueError(f"unknown model: {model_id}")
+                if MODEL_DOWNLOADS.get(model_id) and not model_downloaded(model_id):
+                    _download_for_job(job, model_id)
                 if model_id == "mflux-hs-2k":
                     _run_mflux_hs(job, job["params"])
                 elif model_id == "anima":

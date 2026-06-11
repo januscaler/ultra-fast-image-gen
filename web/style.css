@@ -449,13 +449,17 @@ input:focus-visible, button:focus-visible, textarea:focus-visible, .chip:focus-v
 
 .model-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 
-.model-list button {
+.model-list li { border-radius: 10px; }
+.model-list li:hover { background: var(--surface-2); }
+.model-list li.selected { background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); }
+
+.m-select {
   width: 100%;
   text-align: left;
   background: none;
   border: none;
   border-radius: 10px;
-  padding: 9px 10px;
+  padding: 9px 10px 4px;
   cursor: pointer;
   color: var(--text);
   display: flex;
@@ -463,8 +467,25 @@ input:focus-visible, button:focus-visible, textarea:focus-visible, .chip:focus-v
   gap: 2px;
 }
 
-.model-list button:hover { background: var(--surface-2); }
-.model-list button[aria-pressed="true"] { background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); }
+.m-ctl {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 0 10px 9px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.m-ctl .icon-link {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.m-ctl .danger { color: var(--error); border-color: var(--error); }
+.m-ctl .dl-progress { font-variant-numeric: tabular-nums; }
+.m-ctl .dl-error { color: var(--error); overflow-wrap: anywhere; }
 
 .m-head { display: flex; align-items: baseline; gap: 8px; }
 .m-name { font-size: 13px; font-weight: 600; }
